@@ -337,7 +337,6 @@ namespace UnityEditor.AddressableAssets.GUI
         {
             var n = context as string;
             AddressableAssetSettingsDefaultObject.Settings.activeProfileId = AddressableAssetSettingsDefaultObject.Settings.profileSettings.GetProfileId(n);
-            AddressableAssetUtility.OpenAssetIfUsingVCIntegration(AddressableAssetSettingsDefaultObject.Settings);
         }
 
         bool m_ModificationRegistered;
@@ -345,35 +344,30 @@ namespace UnityEditor.AddressableAssets.GUI
         {
             if (AddressableAssetSettingsDefaultObject.Settings == null)
                 return;
-            if (!m_ModificationRegistered)
-            {
-                AddressableAssetSettingsDefaultObject.Settings.OnModification += OnSettingsModification;
-                m_ModificationRegistered = true;
-            }
+            AddressableAssetSettingsDefaultObject.Settings.OnModification += OnSettingsModification;
+            m_ModificationRegistered = true;
         }
 
         public void OnDisable()
         {
             if (AddressableAssetSettingsDefaultObject.Settings == null)
                 return;
-            if (m_ModificationRegistered)
-            {
-                AddressableAssetSettingsDefaultObject.Settings.OnModification -= OnSettingsModification;
-                m_ModificationRegistered = false;
-            }
+            AddressableAssetSettingsDefaultObject.Settings.OnModification -= OnSettingsModification;
+            m_ModificationRegistered = false;
         }
 
         public bool OnGUI(Rect pos)
         {
             if (settings == null)
                 return false;
-				
-			if (!m_ModificationRegistered)
+
+            if (!m_ModificationRegistered)
             {
                 m_ModificationRegistered = true;
                 settings.OnModification -= OnSettingsModification; //just in case...
                 settings.OnModification += OnSettingsModification;
             }
+
 
             if (m_EntryTree == null)
             {

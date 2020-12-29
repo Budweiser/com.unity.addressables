@@ -38,7 +38,6 @@ static class AddressablesTestUtility
     static public string GetPrefabAlternatingLabel(string suffix, int index) { return string.Format("prefabs_{0}{1}", ((index % 2) == 0) ? "even" : "odd", suffix); }
     static public string GetPrefabUniqueLabel(string suffix, int index) { return string.Format("prefab_{0}{1}", index, suffix); }
     public const int kPrefabCount = 10;
-    public const int kMaxWebRequestCount = 5;
 
     static public void Setup(string testType, string pathFormat, string suffix)
     {
@@ -51,7 +50,6 @@ static class AddressablesTestUtility
         Directory.CreateDirectory(RootFolder);
 
         var settings = AddressableAssetSettings.Create(RootFolder + "/Settings", "AddressableAssetSettings.Tests", false, true);
-        settings.MaxConcurrentWebRequests = kMaxWebRequestCount;
         var group = settings.FindGroup("TestStuff" + suffix);
 
         if (group == null)
@@ -114,28 +112,9 @@ static class AddressablesTestUtility
         };
 
         string hasBehaviorPath = RootFolder + "/AssetReferenceBehavior.prefab";
-        
-        //AssetDatabase.StopAssetEditing();
-
-        ScriptableObject assetWithDifferentTypedSubAssets = ScriptableObject.CreateInstance<UnityEngine.AddressableAssets.Tests.TestObject>();
-        AssetDatabase.CreateAsset(assetWithDifferentTypedSubAssets, $"{RootFolder}/assetWithDifferentTypedSubAssets.asset");
-
-        Material mat = new Material(Shader.Find("Transparent/Diffuse"));
-        Mesh mesh = new Mesh();
-        AssetDatabase.AddObjectToAsset(mat, assetWithDifferentTypedSubAssets);
-        AssetDatabase.AddObjectToAsset(mesh, assetWithDifferentTypedSubAssets);
-
-        AssetDatabase.ImportAsset($"{RootFolder}/assetWithDifferentTypedSubAssets.asset", ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
-        var assetWithDifferentTypedSubObjectsGUID = AssetDatabase.AssetPathToGUID($"{RootFolder}/assetWithDifferentTypedSubAssets.asset");
-        var multiTypedSubAssetsEntry = settings.CreateOrMoveEntry(assetWithDifferentTypedSubObjectsGUID, settings.DefaultGroup);
-        multiTypedSubAssetsEntry.address = "assetWithDifferentTypedSubAssets";
-        aRefTestBehavior.ReferenceWithMultiTypedSubObject = settings.CreateAssetReference(multiTypedSubAssetsEntry.guid);
-        aRefTestBehavior.ReferenceWithMultiTypedSubObjectSubReference = settings.CreateAssetReference(multiTypedSubAssetsEntry.guid);
-        aRefTestBehavior.ReferenceWithMultiTypedSubObjectSubReference.SetEditorSubObject(mat);
-
         PrefabUtility.SaveAsPrefabAsset(go, hasBehaviorPath);
         settings.CreateOrMoveEntry(AssetDatabase.AssetPathToGUID(hasBehaviorPath), group, false, false);
-
+        //AssetDatabase.StopAssetEditing();
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
 

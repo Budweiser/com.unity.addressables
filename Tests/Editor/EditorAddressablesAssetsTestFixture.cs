@@ -1,13 +1,10 @@
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
-using UnityEditor.AddressableAssets.Build;
 using UnityEditor.AddressableAssets.Settings;
-using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 namespace UnityEditor.AddressableAssets.Tests
 {
@@ -21,13 +18,10 @@ namespace UnityEditor.AddressableAssets.Tests
         public void Setup()
         {
             if (Directory.Exists(TempPath))
-            {
                 Directory.Delete(TempPath, true);
-                File.Delete(TempPath + ".meta");
-            }
             Directory.CreateDirectory(TempPath);
 
-            m_Settings = AddressableAssetSettings.Create(Path.Combine(TempPath, "Settings"), "AddressableAssetSettings.Tests", true, true);
+            m_Settings = AddressableAssetSettings.Create(Path.Combine(TempPath, "Settings"), "AddressableAssetSettings.Tests", false, true);
         }
 
         [TearDown]
@@ -37,10 +31,7 @@ namespace UnityEditor.AddressableAssets.Tests
             AssetDatabase.DeleteAsset(AssetDatabase.GetAssetPath(m_Settings));
             Resources.UnloadAsset(m_Settings);
             if (Directory.Exists(TempPath))
-            {
                 Directory.Delete(TempPath, true);
-                File.Delete(TempPath + ".meta");
-            }
             AssetDatabase.Refresh();
         }
 
@@ -53,20 +44,6 @@ namespace UnityEditor.AddressableAssets.Tests
             PrefabUtility.SaveAsPrefabAsset(go, assetPath);
             UnityEngine.Object.DestroyImmediate(go, false);
             return AssetDatabase.AssetPathToGUID(assetPath);
-        }
-
-        protected static string CreateScene(string scenePath, string sceneName)
-        {
-            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene);
-            scene.name = sceneName;
-            EditorSceneManager.SaveScene(scene, scenePath);
-
-            //Clear out the active scene so it doesn't affect tests
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene);
-
-            var list = new List<EditorBuildSettingsScene>() { new EditorBuildSettingsScene(scenePath, true)};
-            SceneManagerState.AddScenesForPlayMode(list);
-            return AssetDatabase.AssetPathToGUID(scenePath);
         }
     }
 }

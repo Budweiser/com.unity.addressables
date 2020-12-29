@@ -1,6 +1,3 @@
----
-uid: addressables-api-exception-handler
----
 # ResourceManager.ExceptionHandler
 #### API
 - `static Action<AsyncOperationHandle, Exception> ExceptionHandler`

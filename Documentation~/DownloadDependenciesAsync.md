@@ -1,6 +1,3 @@
----
-uid: addressables-api-download-dependencies-async
----
 # Addressables.DownloadDependenciesAsync
 #### API
 - `static AsyncOperationHandle DownloadDependenciesAsync(object key, bool autoReleaseHandle = false)`

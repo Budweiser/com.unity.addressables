@@ -103,7 +103,7 @@ namespace UnityEngine.AddressableAssets
 
         internal int SceneOperationCount { get { return m_SceneInstances.Count; } }
         internal int TrackedHandleCount { get { return m_resultToHandle.Count; } }
-        internal bool hasStartedInitialization = false;
+        bool hasStartedInitialization = false;
         public AddressablesImpl(IAllocationStrategy alloc)
         {
             m_ResourceManager = new ResourceManager(alloc);
@@ -280,9 +280,6 @@ namespace UnityEngine.AddressableAssets
 
         internal bool GetResourceLocations(object key, Type type, out IList<IResourceLocation> locations)
         {
-            if (type == null && (key is AssetReference))
-                type = (key as AssetReference).SubOjbectType;
-
             key = EvaluateKey(key);
 
             locations = null;
@@ -863,31 +860,21 @@ namespace UnityEngine.AddressableAssets
             }
         }
 
-        internal bool ClearDependencyCacheForKey(object key)
+        internal void ClearDependencyCacheForKey(object key)
         {
-            bool result = true;
 #if ENABLE_CACHING
             IList<IResourceLocation> locations;
             if (key is IResourceLocation && (key as IResourceLocation).HasDependencies)
             {
-                foreach (var dep in GatherDependenciesFromLocations((key as IResourceLocation).Dependencies))
-                {
-                    //This should never be false when we get here, if it is there's likely a deeper problem.
-                    if (dep.Data is AssetBundleRequestOptions)
-                        result = result && Caching.ClearAllCachedVersions((dep.Data as AssetBundleRequestOptions).BundleName);
-                }
+                foreach (var dep in (key as IResourceLocation).Dependencies)
+                    Caching.ClearAllCachedVersions(Path.GetFileName(dep.InternalId));
             }
             else if (GetResourceLocations(key, typeof(object), out locations))
             {
                 foreach (var dep in GatherDependenciesFromLocations(locations))
-                {
-                    //This should never be false when we get here, if it is there's likely a deeper problem.
-                    if (dep.Data is AssetBundleRequestOptions)
-                        result = result && Caching.ClearAllCachedVersions((dep.Data as AssetBundleRequestOptions).BundleName);
-                }
+                    Caching.ClearAllCachedVersions(Path.GetFileName(dep.InternalId));
             }
 #endif
-            return result;
         }
 
         public AsyncOperationHandle<bool> ClearDependencyCacheAsync(object key, bool autoReleaseHandle)
@@ -895,9 +882,9 @@ namespace UnityEngine.AddressableAssets
             if (ShouldChainRequest)
                 return ResourceManager.CreateChainOperation(ChainOperation, op => ClearDependencyCacheAsync(key, autoReleaseHandle));
 
-            bool result = ClearDependencyCacheForKey(key);
+            ClearDependencyCacheForKey(key);
 
-            var completedOp = ResourceManager.CreateCompletedOperation(result, result ? String.Empty : "Unable to clear the cache.  AssetBundle's may still be loaded for the given key.");
+            var completedOp = ResourceManager.CreateCompletedOperation(true, string.Empty);
             if (autoReleaseHandle)
                 Release(completedOp);
             return completedOp;
@@ -908,11 +895,10 @@ namespace UnityEngine.AddressableAssets
             if (ShouldChainRequest)
                 return ResourceManager.CreateChainOperation(ChainOperation, op => ClearDependencyCacheAsync(locations, autoReleaseHandle));
 
-            bool result = true;
             foreach (var location in locations)
-                result = result && ClearDependencyCacheForKey(location);
+                ClearDependencyCacheForKey(location);
 
-            var completedOp = ResourceManager.CreateCompletedOperation(result, result ? String.Empty : "Unable to clear the cache.  AssetBundle's may still be loaded for the given key(s).");
+            var completedOp = ResourceManager.CreateCompletedOperation(true, string.Empty);
             if (autoReleaseHandle)
                 Release(completedOp);
             return completedOp;
@@ -923,11 +909,10 @@ namespace UnityEngine.AddressableAssets
             if (ShouldChainRequest)
                 return ResourceManager.CreateChainOperation(ChainOperation, op => ClearDependencyCacheAsync(keys, autoReleaseHandle));
 
-            bool result = true;
             foreach (var key in keys)
-                result = result && ClearDependencyCacheForKey(key);
+                ClearDependencyCacheForKey(key);
 
-            var completedOp = ResourceManager.CreateCompletedOperation(result, result ? String.Empty : "Unable to clear the cache.  AssetBundle's may still be loaded for the given key(s).");
+            var completedOp = ResourceManager.CreateCompletedOperation(true, string.Empty);
             if (autoReleaseHandle)
                 Release(completedOp);
             return completedOp;
@@ -1050,39 +1035,15 @@ namespace UnityEngine.AddressableAssets
                 return ResourceManager.CreateCompletedOperation<SceneInstance>(scene, msg);
             }
 
-            if (handle.m_InternalOp.IsRunning)
-                return CreateUnloadSceneWithChain(handle, autoReleaseHandle);
-
             return UnloadSceneAsync(handle, autoReleaseHandle);
         }
 
         public AsyncOperationHandle<SceneInstance> UnloadSceneAsync(AsyncOperationHandle handle, bool autoReleaseHandle = true)
         {
-            if (handle.m_InternalOp.IsRunning)
-                return CreateUnloadSceneWithChain(handle, autoReleaseHandle);
-
             return UnloadSceneAsync(handle.Convert<SceneInstance>(), autoReleaseHandle);
         }
 
         public AsyncOperationHandle<SceneInstance> UnloadSceneAsync(AsyncOperationHandle<SceneInstance> handle, bool autoReleaseHandle = true)
-        {
-            if (handle.m_InternalOp.IsRunning)
-                return CreateUnloadSceneWithChain(handle, autoReleaseHandle);
-
-            return InternalUnloadScene(handle, autoReleaseHandle);
-        }
-
-        internal AsyncOperationHandle<SceneInstance> CreateUnloadSceneWithChain(AsyncOperationHandle handle, bool autoReleaseHandle)
-        {
-            return m_ResourceManager.CreateChainOperation(handle, (completedHandle) => InternalUnloadScene(completedHandle.Convert<SceneInstance>(), autoReleaseHandle));
-        }
-
-        internal AsyncOperationHandle<SceneInstance> CreateUnloadSceneWithChain(AsyncOperationHandle<SceneInstance> handle, bool autoReleaseHandle)
-        {
-            return m_ResourceManager.CreateChainOperation(handle, (completedHandle) => InternalUnloadScene(completedHandle, autoReleaseHandle));
-        }
-
-        internal AsyncOperationHandle<SceneInstance> InternalUnloadScene(AsyncOperationHandle<SceneInstance> handle, bool autoReleaseHandle)
         {
             var relOp = ResourceManager.ReleaseScene(SceneProvider, handle);
             if (autoReleaseHandle)

@@ -9,7 +9,6 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
     internal interface IGenericProviderOperation
     {
         void Init(ResourceManager rm, IResourceProvider provider, IResourceLocation location, AsyncOperationHandle<IList<AsyncOperationHandle>> depOp);
-        void Init(ResourceManager rm, IResourceProvider provider, IResourceLocation location, AsyncOperationHandle<IList<AsyncOperationHandle>> depOp, bool releaseDependenciesOnFailure);
         int ProvideHandleVersion { get; }
         IResourceLocation Location { get; }
         int DependencyCount { get; }
@@ -24,7 +23,6 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
 
     internal class ProviderOperation<TObject> : AsyncOperationBase<TObject>, IGenericProviderOperation, ICachable
     {
-        private bool m_ReleaseDependenciesOnFailure = true;
         private Action<int, object, bool, Exception> m_CompletionCallback;
         private Action<int, IList<object>> m_GetDepCallback;
         private Func<float> m_GetProgressCallback;
@@ -70,12 +68,6 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
         {
             if (m_DepOp.IsValid())
                 deps.Add(m_DepOp);
-        }
-
-        internal override void ReleaseDependencies()
-        {
-            if (m_DepOp.IsValid())
-                m_DepOp.Release();
         }
 
         protected override string DebugName
@@ -152,7 +144,7 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
                 throw new Exception(errorMsg);
             }
 
-            Complete(Result, status, e != null ? e.Message : string.Empty, m_ReleaseDependenciesOnFailure);
+            Complete(Result, status, e != null ? e.Message : string.Empty);
         }
 
         protected override float Progress
@@ -223,19 +215,6 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
                 m_DepOp.Acquire();
             m_Provider = provider;
             m_Location = location;
-            m_ReleaseDependenciesOnFailure = true;
-        }
-
-        public void Init(ResourceManager rm, IResourceProvider provider, IResourceLocation location, AsyncOperationHandle<IList<AsyncOperationHandle>> depOp, bool releaseDependenciesOnFailure)
-        {
-            m_DownloadStatus = default;
-            m_ResourceManager = rm;
-            m_DepOp = depOp;
-            if (m_DepOp.IsValid())
-                m_DepOp.Acquire();
-            m_Provider = provider;
-            m_Location = location;
-            m_ReleaseDependenciesOnFailure = releaseDependenciesOnFailure;
         }
 
         protected override void Destroy()

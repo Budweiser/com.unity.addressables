@@ -12,22 +12,6 @@ namespace UnityEditor.AddressableAssets.Build.AnalyzeRules
     [Serializable]
     public class AnalyzeRule
     {
-        internal struct CustomContextMenu
-        {
-            public string MenuName;
-            public Action MenuAction;
-            public bool MenuEnabled;
-            public bool ToggledOn;
-
-            public CustomContextMenu(string name, Action action, bool enabled, bool toggledOn)
-            {
-                MenuName = name;
-                MenuAction = action;
-                MenuEnabled = enabled;
-                ToggledOn = toggledOn;
-            }
-        }
-        
         /// <summary>
         /// True if this rule can fix itself.  If child class sets this to true, class must override FixIssues
         /// </summary>
@@ -115,6 +99,8 @@ namespace UnityEditor.AddressableAssets.Build.AnalyzeRules
             m_Results.Clear();
         }
 
-        internal virtual IList<CustomContextMenu> GetCustomContextMenuItems() { return new List<CustomContextMenu>(); }
+        internal virtual void Revert()
+        {
+        }
     }
 }

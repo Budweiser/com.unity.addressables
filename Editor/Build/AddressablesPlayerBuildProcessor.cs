@@ -18,35 +18,29 @@ public class AddressablesPlayerBuildProcessor : IPreprocessBuildWithReport, IPos
         get { return 1; }
     }
 
-    /// <summary>
-    /// Removes temporary data created as part of a build.
-    /// </summary>
+    /// <inheritdoc />
     public void OnPostprocessBuild(BuildReport report)
     {
         CleanTemporaryPlayerBuildData();
     }
 
     [InitializeOnLoadMethod]
-    internal static void CleanTemporaryPlayerBuildData()
+    static void CleanTemporaryPlayerBuildData()
     {
-        if (Directory.Exists(Addressables.PlayerBuildDataPath))
+        string addressablesStreamingAssets = Path.Combine(Application.streamingAssetsPath, Addressables.StreamingAssetsSubFolder);
+        if (Directory.Exists(addressablesStreamingAssets))
         {
-            Debug.Log(string.Format("Deleting Addressables data from {0}.", Addressables.PlayerBuildDataPath));
-            DirectoryUtility.DeleteDirectory(Addressables.PlayerBuildDataPath, false);
+            Debug.Log(string.Format("Deleting Addressables data from {0}.", addressablesStreamingAssets));
+            Directory.Delete(addressablesStreamingAssets, true);
+            AssetDatabase.Refresh();
             //Will delete the directory only if it's empty
             DirectoryUtility.DeleteDirectory(Application.streamingAssetsPath);
+            AssetDatabase.Refresh();
         }
     }
 
-    ///<summary>
-    /// Initializes temporary build data.
-    /// </summary>
+    /// <inheritdoc />
     public void OnPreprocessBuild(BuildReport report)
-    {
-        CopyTemporaryPlayerBuildData();
-    }
-
-    internal static void CopyTemporaryPlayerBuildData()
     {
         if (Directory.Exists(Addressables.BuildPath))
         {

@@ -3,10 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor.AddressableAssets.Build.AnalyzeRules;
-using UnityEditor.AddressableAssets.GUI;
 using UnityEditor.AddressableAssets.Settings;
 using UnityEngine;
-using UnityEngine.AddressableAssets;
 
 namespace UnityEditor.AddressableAssets.Build
 {
@@ -43,109 +41,42 @@ namespace UnityEditor.AddressableAssets.Build
             Rules.Add(new TRule());
         }
 
-        internal static string AnalyzeRuleDataFolder
-        {
-            get
-            {
-                return $"{AddressableAssetSettingsDefaultObject.kAddressablesLibraryPath}/AnalyzeData";
-            }
-        }
-
-        internal static string AnalyzeRuleDataName => "AnalyzeRuleData.json"; 
+        internal static string AnalyzeRuleDataFolder => AddressableAssetSettingsDefaultObject.kDefaultConfigFolder + "/AnalyzeData";
+        internal static string AnalyzeRuleDataName => "AnalyzeRuleData.asset";
         internal static string AnalyzeRuleDataPath => AnalyzeRuleDataFolder + "/" + AnalyzeRuleDataName;
-
-        internal static string AnalyzeRuleDataAssetsFolderPath
-        {
-            get
-            {
-                var settings = AddressableAssetSettingsDefaultObject.Settings;
-                var path = AddressableAssetSettingsDefaultObject.kDefaultConfigFolder;
-                if (settings != null && settings.IsPersisted)
-                    path = settings.ConfigFolder;
-
-                return path + "/AnalyzeData/";
-            }
-        }
         internal static AddressableAssetSettings Settings => AddressableAssetSettingsDefaultObject.Settings;
 
         internal static List<AnalyzeRule> Rules { get; } = new List<AnalyzeRule>();
 
         [SerializeField]
-        private static AddressablesAnalyzeResultData m_AnalyzeData;
+        private static AnalyzeResultData m_Data;
 
-        internal static AssetSettingsAnalyzeTreeView TreeView { get; set; }
-
-        internal static AddressablesAnalyzeResultData AnalyzeData
+        internal static AnalyzeResultData AnalyzeData
         {
             get
             {
-                if (m_AnalyzeData == null)
+                if (m_Data == null)
                 {
                     if (!Directory.Exists(AnalyzeRuleDataFolder))
                         Directory.CreateDirectory(AnalyzeRuleDataFolder);
 
                     if (!File.Exists(AnalyzeRuleDataPath))
-                        File.WriteAllText(AnalyzeRuleDataPath, JsonUtility.ToJson(new AddressablesAnalyzeResultData()));
-
-                    //Cleans up the previous result data
-                    if (Directory.Exists(AnalyzeRuleDataAssetsFolderPath))
-                        Directory.Delete(AnalyzeRuleDataAssetsFolderPath, true);
-
-                    m_AnalyzeData = JsonUtility.FromJson<AddressablesAnalyzeResultData>(File.ReadAllText(AnalyzeRuleDataPath));
-                    if(m_AnalyzeData == null)
-                        Addressables.LogWarning($"Unable to load Analyze Result Data at {AnalyzeRuleDataPath}.");
-                    else
                     {
-                        if(m_AnalyzeData.Data == null)
-                            m_AnalyzeData.Data = new Dictionary<string, List<AnalyzeRule.AnalyzeResult>>();
+                        AssetDatabase.CreateAsset(ScriptableObject.CreateInstance(typeof(AnalyzeResultData)),
+                            AnalyzeRuleDataPath);
+                    }
 
-                        foreach (var rule in Rules)
-                        {
-                            if (rule == null)
-                            {
-                                Addressables.LogWarning("An unknown Analyze rule is being skipped because it is null.");
-                                continue;
-                            }
+                    m_Data = AssetDatabase.LoadAssetAtPath<AnalyzeResultData>(AnalyzeRuleDataPath);
 
-                            if (!m_AnalyzeData.Data.ContainsKey(rule.ruleName))
-                                m_AnalyzeData.Data.Add(rule.ruleName, new List<AnalyzeRule.AnalyzeResult>());
-                        }
+                    foreach (var rule in Rules)
+                    {
+                        if (!m_Data.Data.ContainsKey(rule.ruleName))
+                            m_Data.Data.Add(rule.ruleName, new List<AnalyzeRule.AnalyzeResult>());
                     }
                 }
 
-                return m_AnalyzeData;
+                return m_Data;
             }
-        }
-
-        internal static void ReloadUI()
-        {
-            TreeView?.Reload();
-        }
-
-        internal static void SerializeData()
-        {
-            File.WriteAllText(AnalyzeRuleDataPath, JsonUtility.ToJson(m_AnalyzeData));
-        }
-
-        internal static void SaveDataForRule(AnalyzeRule rule, object data)
-        {
-            string jsonData = JsonUtility.ToJson(data);
-            string path = $"{AnalyzeRuleDataFolder}/{rule.ruleName}Data.json";
-            File.WriteAllText(path, jsonData);
-        }
-
-        internal static T GetDataForRule<T>(AnalyzeRule rule)
-        {
-            string path = $"{AnalyzeRuleDataFolder}/{rule.ruleName}Data.json";
-            if (!File.Exists(path))
-                return default;
-            string fileRead = File.ReadAllText(path);
-            return JsonUtility.FromJson<T>(fileRead);
-        }
-
-        internal static void ReplaceAnalyzeData(AnalyzeRule rule, List<AnalyzeRule.AnalyzeResult> results)
-        {
-            m_AnalyzeData.Data[rule.ruleName] = results;
         }
 
         internal static List<AnalyzeRule.AnalyzeResult> RefreshAnalysis<TRule>() where TRule : AnalyzeRule

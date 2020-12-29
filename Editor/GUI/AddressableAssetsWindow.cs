@@ -47,7 +47,9 @@ namespace UnityEditor.AddressableAssets.GUI
 
         public void OnEnable()
         {
-            m_GroupEditor?.OnEnable();
+            if (m_GroupEditor != null)
+                m_GroupEditor.OnEnable();
+
             if (m_Request == null || m_Request.Status == StatusCode.Failure)
             {
                 m_Request = PackageManager.Client.Search("com.unity.addressables");
@@ -56,7 +58,8 @@ namespace UnityEditor.AddressableAssets.GUI
 
         public void OnDisable()
         {
-            m_GroupEditor?.OnDisable();
+            if (m_GroupEditor != null)
+                m_GroupEditor.OnDisable();
         }
 
         internal void OfferToConvert(AddressableAssetSettings settings)
@@ -146,8 +149,10 @@ namespace UnityEditor.AddressableAssets.GUI
                 Rect contentRect = new Rect(0, 0, position.width, position.height);
 
                 if (m_GroupEditor == null)
+                {
                     m_GroupEditor = new AddressableAssetsSettingsGroupEditor(this);
-
+                    m_GroupEditor.OnEnable();
+                }
                 if (m_GroupEditor.OnGUI(contentRect))
                     Repaint();
             }

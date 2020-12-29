@@ -60,16 +60,13 @@ namespace UnityEditor.AddressableAssets.Settings
             }
             set
             {
-                string temp = value;
-                temp = temp.Replace('/', '-');
-                temp = temp.Replace('\\', '-');
-                if (temp != value)
+                m_GroupName = value;
+                m_GroupName = m_GroupName.Replace('/', '-');
+                m_GroupName = m_GroupName.Replace('\\', '-');
+                if (m_GroupName != value)
                     Debug.Log("Group names cannot include '\\' or '/'.  Replacing with '-'. " + m_GroupName);
-                if (m_GroupName != temp)
+                if (m_GroupName != name)
                 {
-                    string previousName = m_GroupName;
-                    m_GroupName = temp;
-
                     string guid;
                     long localId;
                     if (AssetDatabase.TryGetGUIDAndLocalFileIdentifier(this, out guid, out localId))
@@ -77,9 +74,7 @@ namespace UnityEditor.AddressableAssets.Settings
                         var path = AssetDatabase.GUIDToAssetPath(guid);
                         if (!string.IsNullOrEmpty(path))
                         {
-                            var folder = Path.GetDirectoryName(path);
-                            var extension = Path.GetExtension(path);
-                            var newPath = $"{folder}/{m_GroupName}{extension}".Replace('\\', '/');
+                            var newPath = path.Replace(name, m_GroupName);
                             if (path != newPath)
                             {
                                 var setPath = AssetDatabase.MoveAsset(path, newPath);
@@ -87,20 +82,16 @@ namespace UnityEditor.AddressableAssets.Settings
                                 {
                                     //unable to rename group due to invalid file name
                                     Debug.LogError("Rename of Group failed. " + setPath);
-                                    m_GroupName = previousName;
                                 }
+                                m_GroupName = name;
                             }
                         }
-
-                        name = m_GroupName;
                     }
                     else
                     {
                         //this isn't a valid asset, which means it wasn't persisted, so just set the object name to the desired display name.
                         name = m_GroupName;
                     }
-                    
-
                     SetDirty(AddressableAssetSettings.ModificationEvent.GroupRenamed, this, true, true);
                 }
             }
@@ -336,6 +327,7 @@ namespace UnityEditor.AddressableAssets.Settings
                 m_SerializeEntries = new List<AddressableAssetEntry>(entries.Count);
                 foreach (var e in entries)
                     m_SerializeEntries.Add(e);
+                m_SerializeEntries.Sort(this);
             }
         }
 

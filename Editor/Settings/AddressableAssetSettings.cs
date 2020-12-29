@@ -296,9 +296,6 @@ namespace UnityEditor.AddressableAssets.Settings
         public bool IsPersisted { get { return !m_IsTemporary; } }
 
         [SerializeField]
-        bool m_OptimizeCatalogSize = false;
-
-        [SerializeField]
         bool m_BuildRemoteCatalog = false;
 
         [SerializeField]
@@ -312,7 +309,6 @@ namespace UnityEditor.AddressableAssets.Settings
 
         [SerializeField]
         int m_maxConcurrentWebRequests = 500;
-
         /// <summary>
         /// The maximum number of concurrent web requests.  This value will be clamped from 1 to 1024.
         /// </summary>
@@ -332,11 +328,7 @@ namespace UnityEditor.AddressableAssets.Settings
         }
 
         [SerializeField]
-#if UNITY_2021_1_OR_NEWER
-        bool m_ContiguousBundles = true;
-#else
         bool m_ContiguousBundles = false;
-#endif
 
         /// <summary>
         /// If set, packs assets in bundles contiguously based on the ordering of the source asset which results in improved asset loading times. Disable this if you've built bundles with a version of Addressables older than 1.12.1 and you want to minimize bundle changes.
@@ -345,15 +337,6 @@ namespace UnityEditor.AddressableAssets.Settings
         {
             get { return m_ContiguousBundles; }
             set { m_ContiguousBundles = value; }
-        }
-
-        /// <summary>
-        /// Enables size optimization of content catalogs.  This may increase the cpu usage of loading the catalog.
-        /// </summary>
-        internal bool OptimizeCatalogSize
-        {
-            get { return m_OptimizeCatalogSize; }
-            set { m_OptimizeCatalogSize = value; }
         }
 
         /// <summary>
@@ -920,8 +903,8 @@ namespace UnityEditor.AddressableAssets.Settings
         /// <param name="postEvent">Send modification event.</param>
         public void AddLabel(string label, bool postEvent = true)
         {
-            if(m_LabelTable.AddLabelName(label))
-                SetDirty(ModificationEvent.LabelAdded, label, postEvent, true);
+            m_LabelTable.AddLabelName(label);
+            SetDirty(ModificationEvent.LabelAdded, label, postEvent, true);
         }
 
         /// <summary>
@@ -933,8 +916,6 @@ namespace UnityEditor.AddressableAssets.Settings
         {
             m_LabelTable.RemoveLabelName(label);
             SetDirty(ModificationEvent.LabelRemoved, label, postEvent, true);
-            Debug.LogWarningFormat("Label \"{0}\" removed. If you re-add the label before building, it will be restored in entries that had it. " +
-                "Building Addressables content will clear this label from all entries. That action cannot be undone.", label);
         }
 
         [FormerlySerializedAs("m_activeProfileId")]
@@ -1276,7 +1257,7 @@ namespace UnityEditor.AddressableAssets.Settings
             }
         }
 
-        internal static AddressableAssetGroup CreateBuiltInData(AddressableAssetSettings aa)
+        private static AddressableAssetGroup CreateBuiltInData(AddressableAssetSettings aa)
         {
             var playerData = aa.CreateGroup(PlayerDataGroupName, false, true, false, null, typeof(PlayerDataGroupSchema));
             var resourceEntry = aa.CreateOrMoveEntry(AddressableAssetEntry.ResourcesName, playerData);
@@ -1420,7 +1401,6 @@ namespace UnityEditor.AddressableAssets.Settings
             }
 
             var entries = new List<AddressableAssetEntry>();
-            var createdDirs = new List<string>();
             AssetDatabase.StartAssetEditing();
             foreach (var item in guidToNewPath)
             {
@@ -1428,7 +1408,6 @@ namespace UnityEditor.AddressableAssets.Settings
                 if (dirInfo != null && !dirInfo.Exists)
                 {
                     dirInfo.Create();
-                    createdDirs.Add(dirInfo.FullName);
                     AssetDatabase.StopAssetEditing();
                     AssetDatabase.Refresh();
                     AssetDatabase.StartAssetEditing();
@@ -1450,24 +1429,15 @@ namespace UnityEditor.AddressableAssets.Settings
                     var index = oldPath.ToLower().LastIndexOf("resources/");
                     if (index >= 0)
                     {
-                        var newAddress = oldPath.Substring(index + 10);
-                        if (Path.HasExtension(newAddress))
-                        {
-                            newAddress = newAddress.Replace(Path.GetExtension(oldPath), "");
-                        }
-
+                        var newAddress = oldPath.Substring(index + 10).Replace(Path.GetExtension(oldPath), "");
                         if (!string.IsNullOrEmpty(newAddress))
                         {
-                            newEntry.SetAddress(newAddress, false);
+                            newEntry.address = newAddress;
                         }
                     }
                     entries.Add(newEntry);
                 }
             }
-
-            foreach (var dir in createdDirs)
-                DirectoryUtility.DeleteDirectory(dir, onlyIfEmpty: true);
-
             AssetDatabase.StopAssetEditing();
             AssetDatabase.Refresh();
             SetDirty(ModificationEvent.EntryMoved, entries, true, true);
@@ -1618,7 +1588,6 @@ namespace UnityEditor.AddressableAssets.Settings
             if (setAsDefaultGroup)
                 DefaultGroup = group;
             SetDirty(ModificationEvent.GroupAdded, group, postEvent, true);
-            AddressableAssetUtility.OpenAssetIfUsingVCIntegration(this);
             return group;
         }
 
@@ -1692,16 +1661,13 @@ namespace UnityEditor.AddressableAssets.Settings
 
         internal void SetLabelValueForEntries(List<AddressableAssetEntry> entries, string label, bool value, bool postEvent = true)
         {
-            var addedNewLabel = value && m_LabelTable.AddLabelName(label);
+            if (value)
+                AddLabel(label);
 
             foreach (var e in entries)
-            {
-                e.SetLabel(label, value, false, false);
-                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(e.parentGroup);
-            }
+                e.SetLabel(label, value, false);
 
-            SetDirty(ModificationEvent.EntryModified, entries, postEvent, addedNewLabel);
-            AddressableAssetUtility.OpenAssetIfUsingVCIntegration(this);
+            SetDirty(ModificationEvent.EntryModified, entries, postEvent, true);
         }
 
         internal void OnPostprocessAllAssets(string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths)
@@ -1795,7 +1761,6 @@ namespace UnityEditor.AddressableAssets.Settings
                     {
                         var newGroupName = Path.GetFileNameWithoutExtension(str);
                         group.Name = newGroupName;
-                        relatedAssetChanged = true;
                     }
                 }
                 else
@@ -1865,7 +1830,7 @@ namespace UnityEditor.AddressableAssets.Settings
 
         /// <summary>
         /// Runs the active player data build script to create runtime data.
-        /// See the [BuildPlayerContent](xref:addressables-api-build-player-content) documentation for more details.
+        /// See the [BuildPlayerContent](../manual/BuildPlayerContent.html) documentation for more details.
         /// </summary>
         public static void BuildPlayerContent()
         {

@@ -9,17 +9,9 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
 {
     class GroupOperation : AsyncOperationBase<IList<AsyncOperationHandle>>, ICachable
     {
-        [Flags]
-        public enum GroupOperationSettings
-        {
-            None = 0,
-            ReleaseDependenciesOnFailure = 1,
-            AllowFailedDependencies = 2
-        }
-        
         Action<AsyncOperationHandle> m_InternalOnComplete;
         int m_LoadedCount;
-        GroupOperationSettings m_Settings;
+        bool m_ReleaseDependenciesOnFailure = true;
         string debugName = null;
         private const int k_MaxDisplayedLocationLength = 45;
 
@@ -39,14 +31,6 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
         protected override void GetDependencies(List<AsyncOperationHandle> deps)
         {
             deps.AddRange(Result);
-        }
-
-        internal override void ReleaseDependencies()
-        {
-            for (int i = 0; i < Result.Count; i++)
-                if (Result[i].IsValid())
-                    Result[i].Release();
-            Result.Clear();
         }
 
         internal override DownloadStatus GetDownloadStatus(HashSet<object> visited)
@@ -143,25 +127,25 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
             {
                 bool success = true;
                 string errorMsg = string.Empty;
-                if (!m_Settings.HasFlag(GroupOperationSettings.AllowFailedDependencies))
+                for (int i = 0; i < Result.Count; i++)
                 {
-                    for (int i = 0; i < Result.Count; i++)
+                    if (Result[i].Status != AsyncOperationStatus.Succeeded)
                     {
-                        if (Result[i].Status != AsyncOperationStatus.Succeeded)
-                        {
-                            success = false;
-                            errorMsg = Result[i].OperationException != null ? Result[i].OperationException.Message : string.Empty;
-                            break;
-                        }
+                        success = false;
+                        errorMsg = Result[i].OperationException != null ? Result[i].OperationException.Message : string.Empty;
+                        break;
                     }
                 }
-                Complete(Result, success, errorMsg, m_Settings.HasFlag(GroupOperationSettings.ReleaseDependenciesOnFailure));
+                Complete(Result, success, errorMsg, m_ReleaseDependenciesOnFailure);
             }
         }
 
         protected override void Destroy()
         {
-            ReleaseDependencies();
+            for (int i = 0; i < Result.Count; i++)
+                if (Result[i].IsValid())
+                    Result[i].Release();
+            Result.Clear();
         }
 
         protected override float Progress
@@ -183,18 +167,10 @@ namespace UnityEngine.ResourceManagement.AsyncOperations
         }
 
 
-        public void Init(List<AsyncOperationHandle> operations, bool releaseDependenciesOnFailure = true, bool allowFailedDependencies = false)
+        public void Init(List<AsyncOperationHandle> operations, bool releaseDependenciesOnFailure = true)
         {
             Result = new List<AsyncOperationHandle>(operations);
-            m_Settings = releaseDependenciesOnFailure ? GroupOperationSettings.ReleaseDependenciesOnFailure : GroupOperationSettings.None;
-            if( allowFailedDependencies )
-                m_Settings |= GroupOperationSettings.AllowFailedDependencies;
-        }
-        
-        public void Init(List<AsyncOperationHandle> operations, GroupOperationSettings settings)
-        {
-            Result = new List<AsyncOperationHandle>(operations);
-            m_Settings = settings;
+            m_ReleaseDependenciesOnFailure = releaseDependenciesOnFailure;
         }
 
         void OnOperationCompleted(AsyncOperationHandle op)

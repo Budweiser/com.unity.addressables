@@ -57,10 +57,6 @@ namespace UnityEditor.AddressableAssets.GUI
 
         void OnGUI()
         {
-            AddressableAssetSettings settings = AddressableAssetSettingsDefaultObject.Settings;
-            if (settings == null)
-                return;
-
             GUILayout.BeginArea(displayAreaRect);
             m_AnalyzeEditor.OnGUI(displayAreaRect);
             GUILayout.EndArea();

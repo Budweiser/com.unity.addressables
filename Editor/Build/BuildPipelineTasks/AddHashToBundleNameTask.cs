@@ -70,9 +70,8 @@ namespace UnityEditor.AddressableAssets.Build.BuildPipelineTasks
             return ReturnCode.Success;
         }
 
-        internal RawHash GetAssetsHash(List<GUID> assets, AddressableAssetsBuildContext context)
+        private RawHash GetAssetsHash(List<GUID> assets, AddressableAssetsBuildContext context)
         {
-            assets.Sort();
             var hashes = new HashSet<Hash128>();
             foreach (var g in assets)
             {

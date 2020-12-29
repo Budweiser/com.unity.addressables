@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using UnityEditor.AddressableAssets.Build;
 using UnityEditor.AddressableAssets.Settings;
 using UnityEngine;
@@ -32,58 +30,46 @@ namespace UnityEditor.AddressableAssets.GUI
             }
 
             Undo.RecordObject(aaSettings, "AddressableAssetSettings");
-
-            var targetInfos = new List<TargetInfo>();
-            foreach (var t in targets)
+            string path;
+            var guid = string.Empty;
+            //if (create || EditorUtility.DisplayDialog("Remove Addressable Asset Entries", "Do you want to remove Addressable Asset entries for " + targets.Length + " items?", "Yes", "Cancel"))
             {
-                if (AddressableAssetUtility.GetPathAndGUIDFromTarget(t, out var path, out var guid, out var mainAssetType))
-                {
-                    targetInfos.Add(new TargetInfo(){Guid = guid, Path = path, MainAssetType = mainAssetType});
-                }
-            }
-
-            if (!create)
-            {
-                targetInfos.ForEach(ti =>
-                {
-                    AddressableAssetGroup group = aaSettings.FindAssetEntry(ti.Guid).parentGroup;
-                    aaSettings.RemoveAssetEntry(ti.Guid);
-                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(group);
-                });
-            }
-            else
-            {
-                var resourceTargets = targetInfos.Where(ti => AddressableAssetUtility.IsInResources(ti.Path));
-                if (resourceTargets.Any())
-                {
-                    var resourcePaths = resourceTargets.Select(t => t.Path).ToList();
-                    var resourceGuids = resourceTargets.Select(t => t.Guid).ToList();
-                    AddressableAssetUtility.SafeMoveResourcesToGroup(aaSettings, aaSettings.DefaultGroup, resourcePaths, resourceGuids);
-                }
-
                 var entriesAdded = new List<AddressableAssetEntry>();
                 var modifiedGroups = new HashSet<AddressableAssetGroup>();
-                var otherTargetInfos = targetInfos.Except(resourceTargets);
-                foreach (var info in otherTargetInfos)
+                Type mainAssetType;
+                foreach (var t in targets)
                 {
-                    var e = aaSettings.CreateOrMoveEntry(info.Guid, aaSettings.DefaultGroup, false, false);
-                    entriesAdded.Add(e);
-                    modifiedGroups.Add(e.parentGroup);
+                    if (AddressableAssetUtility.GetPathAndGUIDFromTarget(t, out path, ref guid, out mainAssetType))
+                    {
+                        if (create)
+                        {
+                            if (AddressableAssetUtility.IsInResources(path))
+                                AddressableAssetUtility.SafeMoveResourcesToGroup(aaSettings, aaSettings.DefaultGroup, new List<string> { path });
+                            else
+                            {
+                                var e = aaSettings.CreateOrMoveEntry(guid, aaSettings.DefaultGroup, false, false);
+                                entriesAdded.Add(e);
+                                modifiedGroups.Add(e.parentGroup);
+                            }
+                        }
+                        else
+                            aaSettings.RemoveAssetEntry(guid);
+                    }
                 }
 
-                foreach (var g in modifiedGroups)
+                if (create)
                 {
-                    g.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entriesAdded, false, true);
-                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(g);
+                    foreach (var g in modifiedGroups)
+                        g.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entriesAdded, false, true);
+                    aaSettings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entriesAdded, true, false);
                 }
-
-                aaSettings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entriesAdded, true, false);
             }
         }
 
         static void OnPostHeaderGUI(Editor editor)
         {
             var aaSettings = AddressableAssetSettingsDefaultObject.Settings;
+            var guid = string.Empty;
             AddressableAssetEntry entry = null;
 
             if (editor.targets.Length > 0)
@@ -93,10 +79,17 @@ namespace UnityEditor.AddressableAssets.GUI
                 bool foundAssetGroup = false;
                 foreach (var t in editor.targets)
                 {
-                    foundAssetGroup |= t is AddressableAssetGroup;
-                    foundAssetGroup |= t is AddressableAssetGroupSchema;
-                    if (AddressableAssetUtility.GetPathAndGUIDFromTarget(t, out var path, out var guid, out var mainAssetType))
+                    string path;
+                    Type mainAssetType;
+                    if (AddressableAssetUtility.GetPathAndGUIDFromTarget(t, out path, ref guid, out mainAssetType) &&
+                        path.ToLower().Contains("assets") &&
+                        mainAssetType != null)
                     {
+                        // Is addressable group
+                        if (path.ToLower().Contains("addressableassetsdata/assetgroups"))
+                        {
+                            foundAssetGroup = true;
+                        }
                         // Is asset
                         if (!BuildUtility.IsEditorAssembly(mainAssetType.Assembly))
                         {
@@ -141,24 +134,15 @@ namespace UnityEditor.AddressableAssets.GUI
                 {
                     GUILayout.BeginHorizontal();
                     if (!GUILayout.Toggle(true, s_AddressableAssetToggleText, GUILayout.ExpandWidth(false)))
-                    {
                         SetAaEntry(aaSettings, editor.targets, false);
-                        GUIUtility.ExitGUI();
-                    }
 
                     if (editor.targets.Length == 1 && entry != null)
                     {
                         string newAddress = EditorGUILayout.DelayedTextField(entry.address, GUILayout.ExpandWidth(true));
-                        if (newAddress != entry.address)
-                        {
-                            if (newAddress.Contains("[") && newAddress.Contains("]"))
-                                Debug.LogErrorFormat("Rename of address '{0}' cannot contain '[ ]'.", entry.address);
-                            else
-                            {
-                                entry.address = newAddress;
-                                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(entry.parentGroup, true);
-                            }
-                        }
+                        if (newAddress != entry.address && newAddress.Contains("[") && newAddress.Contains("]"))
+                            Debug.LogErrorFormat("Rename of address '{0}' cannot contain '[ ]'.", entry.address);
+                        else
+                            entry.address = newAddress;
                     }
                     GUILayout.EndHorizontal();
                 }
@@ -173,13 +157,6 @@ namespace UnityEditor.AddressableAssets.GUI
                     GUILayout.EndHorizontal();
                 }
             }
-        }
-
-        class TargetInfo
-        {
-            public string Guid;
-            public string Path;
-            public Type MainAssetType;
         }
     }
 }

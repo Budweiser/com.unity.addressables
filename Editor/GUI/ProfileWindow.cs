@@ -130,7 +130,6 @@ namespace UnityEditor.AddressableAssets.GUI
         {
             Undo.RecordObject(settings, "Profile Variable Deleted");
             settings.profileSettings.RemoveValue(toBeDeleted.Id);
-            AddressableAssetUtility.OpenAssetIfUsingVCIntegration(settings);
         }
 
         void TopToolbar(Rect toolbarPos)
@@ -234,13 +233,12 @@ namespace UnityEditor.AddressableAssets.GUI
                 Rect fieldRect = new Rect(fieldX, fieldY, fieldWidth, fieldHeight);
                 Rect labelRect = new Rect(fieldX, fieldY, m_LabelWidth, fieldHeight);
 
-                string newName = EditorGUI.DelayedTextField(fieldRect, curVariable.ProfileName, selectedProfile.values[i].value);
+                string newName = EditorGUI.TextField(fieldRect, curVariable.ProfileName, selectedProfile.values[i].value);
                 //Ensure changes get serialized
                 if (selectedProfile.values[i].value != newName)
                 {
                     Undo.RecordObject(settings, "Variable value changed");
                     settings.profileSettings.SetValue(selectedProfile.id, settings.profileSettings.profileEntryNames[i].ProfileName, newName);
-                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(settings);
                 }
 
                 if (evt.type == EventType.ContextClick)
@@ -302,7 +300,6 @@ namespace UnityEditor.AddressableAssets.GUI
                     ? GetSelectedProfile().id
                     : settings.profileSettings.profiles[0].id;
                 settings.profileSettings.AddProfile(uniqueProfileName, idToCopyFrom);
-                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(settings);
                 m_ProfileTreeView.Reload();
             }
         }
@@ -377,7 +374,6 @@ namespace UnityEditor.AddressableAssets.GUI
                     {
                         Undo.RecordObject(m_Settings, "Profile Variable Renamed");
                         m_ProfileVariable.SetName(m_NewName, m_Settings.profileSettings);
-                        AddressableAssetUtility.OpenAssetIfUsingVCIntegration(m_Settings, true);
                         editorWindow.Close();
                     }
                 }
@@ -437,7 +433,6 @@ namespace UnityEditor.AddressableAssets.GUI
                     {
                         Undo.RecordObject(m_Settings, "Profile Variable " + m_Name + " Created");
                         m_Settings.profileSettings.CreateValue(m_Name, m_Value);
-                        AddressableAssetUtility.OpenAssetIfUsingVCIntegration(m_Settings);
                         m_ProfileTreeView.Reload();
                         editorWindow.Close();
                     }

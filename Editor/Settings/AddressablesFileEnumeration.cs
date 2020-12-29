@@ -122,14 +122,15 @@ namespace UnityEditor.AddressableAssets.Settings
         {
             paths = new HashSet<string>();
             bool hasAddrFolder = false;
+
             foreach (AddressableAssetGroup group in settings.groups)
             {
                 if (group == null)
                     continue;
                 foreach (AddressableAssetEntry entry in group.entries)
                 {
-                    string convertedPath = entry.AssetPath;
-                    if (!hasAddrFolder && AssetDatabase.IsValidFolder(convertedPath))
+                    string convertedPath = entry.AssetPath.Replace('\\', '/');
+                    if (Directory.Exists(convertedPath))
                         hasAddrFolder = true;
                     paths.Add(convertedPath);
                 }
@@ -153,7 +154,7 @@ namespace UnityEditor.AddressableAssets.Settings
                         continue;
                     string convertedPath = filename.Replace('\\', '/');
                     var node = tree.FindNode(convertedPath, true);
-                    node.IsFolder = AssetDatabase.IsValidFolder(filename);
+                    node.IsFolder = Directory.Exists(filename);
                     node.HasEnumerated = true;
                 }
             }
@@ -206,7 +207,7 @@ namespace UnityEditor.AddressableAssets.Settings
 
         public static List<string> EnumerateAddressableFolder(string path, AddressableAssetSettings settings, bool recurseAll, IBuildLogger logger = null)
         {
-            if(!AssetDatabase.IsValidFolder(path))
+            if(!Directory.Exists(path))
                 throw new Exception($"Path {path} cannot be enumerated because it does not exist");
 
             AddressableAssetTree tree = m_PrecomputedTree != null ? m_PrecomputedTree : BuildAddressableTree(settings, logger);

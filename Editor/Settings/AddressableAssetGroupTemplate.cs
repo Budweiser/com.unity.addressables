@@ -212,10 +212,7 @@ namespace UnityEditor.AddressableAssets.Settings
             if (Settings != null)
             {
                 if (Settings.IsPersisted && this != null)
-                {
                     EditorUtility.SetDirty(this);
-                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(this);
-                }
                 Settings.SetDirty(modificationEvent, eventData, postEvent, false);
             }
         }
