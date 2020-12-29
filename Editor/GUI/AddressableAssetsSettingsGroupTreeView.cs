@@ -7,12 +7,14 @@ using UnityEditor.IMGUI.Controls;
 using UnityEngine;
 using UnityEngine.Assertions;
 using UnityEngine.AddressableAssets;
+using Debug = UnityEngine.Debug;
+using static UnityEditor.AddressableAssets.Settings.AddressablesFileEnumeration;
 
 namespace UnityEditor.AddressableAssets.GUI
 {
     using Object = UnityEngine.Object;
 
-    class AddressableAssetEntryTreeView : TreeView
+    internal class AddressableAssetEntryTreeView : TreeView
     {
         AddressableAssetsSettingsGroupEditor m_Editor;
         internal string customSearchString = string.Empty;
@@ -97,9 +99,11 @@ namespace UnityEditor.AddressableAssets.GUI
         protected override TreeViewItem BuildRoot()
         {
             var root = new TreeViewItem(-1, -1);
-            foreach (var group in m_Editor.settings.groups)
-                AddGroupChildrenBuild(group, root);
-
+            using (new AddressablesFileEnumerationScope(BuildAddressableTree(m_Editor.settings)))
+            {
+                foreach (var group in m_Editor.settings.groups)
+                    AddGroupChildrenBuild(group, root);
+            }
             return root;
         }
 
@@ -206,11 +210,15 @@ namespace UnityEditor.AddressableAssets.GUI
                 return;
 
             List<AssetEntryTreeViewItem> kids = new List<AssetEntryTreeViewItem>();
-            foreach (var c in children)
+            List<TreeViewItem> copy = new List<TreeViewItem>(children);
+            children.Clear();
+            foreach (var c in copy)
             {
                 var child = c as AssetEntryTreeViewItem;
                 if (child != null && child.entry != null)
                     kids.Add(child);
+                else
+                    children.Add(c);
             }
 
             ColumnId col = m_SortOptions[sortedColumns[0]];
@@ -232,7 +240,6 @@ namespace UnityEditor.AddressableAssets.GUI
                     break;
             }
 
-            children.Clear();
             foreach (var o in orderedKids)
                 children.Add(o);
 
@@ -295,16 +302,61 @@ namespace UnityEditor.AddressableAssets.GUI
 
         void AddGroupChildrenBuild(AddressableAssetGroup group, TreeViewItem root)
         {
-            var groupItem = new AssetEntryTreeViewItem(group, 0);
-            root.AddChild(groupItem);
+            int depth = 0;
+
+            AssetEntryTreeViewItem groupItem = null;
+            if (ProjectConfigData.showGroupsAsHierarchy)
+            {
+                //// dash in name imitates hiearchy.
+                TreeViewItem newRoot = root;
+                var parts = group.Name.Split('-');
+                string partialRestore = "";
+                for(int index = 0; index < parts.Length-1; index++)
+                {
+                    TreeViewItem folderItem = null;
+                    partialRestore += parts[index];
+                    int hash = partialRestore.GetHashCode();
+                    if (!TryGetChild(newRoot, hash, ref folderItem))
+                    {
+                        folderItem = new AssetEntryTreeViewItem(parts[index], depth, hash);
+                        newRoot.AddChild(folderItem);
+                    }
+                    depth++;
+                    newRoot = folderItem;
+                }
+                
+                groupItem = new AssetEntryTreeViewItem(group, depth);
+                newRoot.AddChild(groupItem);
+            }
+            else
+            {
+                groupItem = new AssetEntryTreeViewItem(group, 0);
+                root.AddChild(groupItem);
+            }
 
             if (group != null && group.entries.Count > 0)
             {
                 foreach (var entry in group.entries)
                 {
-                    AddAndRecurseEntriesBuild(entry, groupItem, 1, IsExpanded(groupItem.id));
+                    AddAndRecurseEntriesBuild(entry, groupItem, depth+1, IsExpanded(groupItem.id));
                 }
             }
+        }
+
+        bool TryGetChild(TreeViewItem root, int childHash, ref TreeViewItem childItem)
+        {
+            if (root.children == null)
+                return false;
+            foreach (var child in root.children)
+            {
+                if (child.id == childHash)
+                {
+                    childItem = child;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         void AddAndRecurseEntriesBuild(AddressableAssetEntry entry, AssetEntryTreeViewItem parent, int depth, bool expanded)
@@ -319,11 +371,11 @@ namespace UnityEditor.AddressableAssets.GUI
             RecurseEntryChildren(entry, item, depth);
         }
 
-        private void RecurseEntryChildren(AddressableAssetEntry entry, AssetEntryTreeViewItem item, int depth)
+        internal void RecurseEntryChildren(AddressableAssetEntry entry, AssetEntryTreeViewItem item, int depth)
         {
             item.checkedForChildren = true;
             var subAssets = new List<AddressableAssetEntry>();
-            entry.GatherAllAssets(subAssets, false, false, ProjectConfigData.showSubObjectsInGroupView);
+            entry.GatherAllAssets(subAssets, false, entry.IsInResources, ProjectConfigData.showSubObjectsInGroupView);
             if (subAssets.Count > 0)
             {
                 foreach (var e in subAssets)
@@ -399,7 +451,10 @@ namespace UnityEditor.AddressableAssets.GUI
             var item = args.item as AssetEntryTreeViewItem;
             if (item == null || item.group == null && item.entry == null)
             {
-                base.RowGUI(args);
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    base.RowGUI(args);
+                }
             }
             else if (item.group != null)
             {
@@ -603,6 +658,7 @@ namespace UnityEditor.AddressableAssets.GUI
                 else if (item.entry != null)
                 {
                     item.entry.address = args.newName;
+                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(item.entry.parentGroup, true);
                 }
                 else if (item.group != null)
                 {
@@ -612,7 +668,11 @@ namespace UnityEditor.AddressableAssets.GUI
                         Addressables.LogWarning("There is already a group named '" + args.newName + "'.  Cannot rename this group to match");
                     }
                     else
+                    {
                         item.group.Name = args.newName;
+                        AddressableAssetUtility.OpenAssetIfUsingVCIntegration(item.group, true);
+                        AddressableAssetUtility.OpenAssetIfUsingVCIntegration(item.group.Settings, true);
+                    }
                 }
                 Reload();
             }
@@ -708,6 +768,10 @@ namespace UnityEditor.AddressableAssets.GUI
                     isEntry = true;
                     resourceCount += item.entry.IsInResources ? 1 : 0;
                     isMissingPath |= string.IsNullOrEmpty(item.entry.AssetPath);
+                }
+                else if (!string.IsNullOrEmpty(item.folderPath))
+                {
+                    hasReadOnly = true;
                 }
             }
             if (isEntry && isGroup)
@@ -939,6 +1003,7 @@ namespace UnityEditor.AddressableAssets.GUI
                     groups.Add(item.group);
                 }
                 m_Editor.settings.SetDirty(AddressableAssetSettings.ModificationEvent.GroupRemoved, groups, true, true);
+                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(m_Editor.settings);
             }
         }
 
@@ -956,7 +1021,10 @@ namespace UnityEditor.AddressableAssets.GUI
                 modifiedGroups.Add(item.entry.parentGroup);
             }
             foreach (var g in modifiedGroups)
+            {
                 g.SetDirty(AddressableAssetSettings.ModificationEvent.EntryModified, entries, false, true);
+                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(g);
+            }
             m_Editor.settings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryModified, entries, true, false);
         }
 
@@ -979,7 +1047,10 @@ namespace UnityEditor.AddressableAssets.GUI
                     }
                 }
                 foreach (var g in modifiedGroups)
+                {
                     g.SetDirty(AddressableAssetSettings.ModificationEvent.EntryModified, entries, false, true);
+                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(g);
+                }
                 m_Editor.settings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryRemoved, entries, true, false);
             }
         }
@@ -1072,12 +1143,13 @@ namespace UnityEditor.AddressableAssets.GUI
             foreach (var id in args.draggedItemIDs)
             {
                 var item = FindItemInVisibleRows(id);
-                selectedNodes.Add(item);
+                if (item.entry != null || (item.parent == rootItem && item.@group != null))
+                    selectedNodes.Add(item);
             }
             DragAndDrop.paths = null;
             DragAndDrop.objectReferences = new Object[] {};
             DragAndDrop.SetGenericData("AssetEntryTreeViewItem", selectedNodes);
-            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            DragAndDrop.visualMode = selectedNodes.Count > 0 ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
             DragAndDrop.StartDrag("AssetBundleTree");
         }
 
@@ -1161,7 +1233,10 @@ namespace UnityEditor.AddressableAssets.GUI
                                     modifiedGroups.Add(e.parentGroup);
                                 }
                                 foreach (var g in modifiedGroups)
+                                {
                                     g.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entries, false, true);
+                                    AddressableAssetUtility.OpenAssetIfUsingVCIntegration(g);
+                                }
                                 m_Editor.settings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entries, true, false);
                             }
                         }
@@ -1225,11 +1300,7 @@ namespace UnityEditor.AddressableAssets.GUI
 
                         bool canMarkNonResources = true;
                         if (resourcePaths.Count > 0)
-                        {
-                            canMarkNonResources =
-                                AddressableAssetUtility.SafeMoveResourcesToGroup(m_Editor.settings, parent,
-                                    resourcePaths);
-                        }
+                            canMarkNonResources = AddressableAssetUtility.SafeMoveResourcesToGroup(m_Editor.settings, parent, resourcePaths, null);
 
                         if (canMarkNonResources)
                         {
@@ -1245,7 +1316,10 @@ namespace UnityEditor.AddressableAssets.GUI
                             }
 
                             foreach (var g in modifiedGroups)
+                            {
                                 g.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entries, false, true);
+                                AddressableAssetUtility.OpenAssetIfUsingVCIntegration(g);
+                            }
                             m_Editor.settings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryMoved, entries,
                                 true,
                                 false);
@@ -1294,6 +1368,7 @@ namespace UnityEditor.AddressableAssets.GUI
     {
         public AddressableAssetEntry entry;
         public AddressableAssetGroup group;
+        public string folderPath;
         public Texture2D assetIcon;
         public bool isRenaming;
         public bool checkedForChildren = true;
@@ -1302,6 +1377,7 @@ namespace UnityEditor.AddressableAssets.GUI
         {
             entry = e;
             group = null;
+            folderPath = string.Empty;
             assetIcon = entry == null ? null : AssetDatabase.GetCachedIcon(e.AssetPath) as Texture2D;
             isRenaming = false;
         }
@@ -1310,6 +1386,16 @@ namespace UnityEditor.AddressableAssets.GUI
         {
             entry = null;
             group = g;
+            folderPath = string.Empty;
+            assetIcon = null;
+            isRenaming = false;
+        }
+
+        public AssetEntryTreeViewItem(string folder, int d, int id) : base(id, d, string.IsNullOrEmpty(folder) ? "missing" : folder)
+        {
+            entry = null;
+            group = null;
+            folderPath = folder;
             assetIcon = null;
             isRenaming = false;
         }
@@ -1330,6 +1416,7 @@ namespace UnityEditor.AddressableAssets.GUI
                 base.displayName = value;
             }
         }
+        
     }
 
 

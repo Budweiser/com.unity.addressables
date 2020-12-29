@@ -30,6 +30,7 @@ namespace UnityEditor.AddressableAssets.GUI
         internal AssetReference m_AssetRefObject;
         internal GUIContent m_label;
         internal bool m_ReferencesSame = true;
+        SubassetPopup m_SubassetPopup;
         List<AssetReferenceUIRestrictionSurrogate> m_Restrictions = null;
 
 #if UNITY_2019_1_OR_NEWER
@@ -121,7 +122,7 @@ namespace UnityEditor.AddressableAssets.GUI
             if (asset == null)
             {
                 m_AssetRefObject.SetEditorAsset(null);
-                EditorUtility.SetDirty(property.serializedObject.targetObject);
+                SetDirty(property.serializedObject.targetObject);
                 return guid;
             }
             success = m_AssetRefObject.SetEditorAsset(asset);
@@ -132,11 +133,7 @@ namespace UnityEditor.AddressableAssets.GUI
                 else
                     m_AssetRefObject.SubObjectName = null;
                 guid = m_AssetRefObject.AssetGUID;
-                EditorUtility.SetDirty(property.serializedObject.targetObject);
-
-                Component comp = property.serializedObject.targetObject as Component;
-                if (comp != null && comp.gameObject != null && comp.gameObject.activeInHierarchy)
-                    EditorSceneManager.MarkSceneDirty(comp.gameObject.scene);
+                SetDirty(property.serializedObject.targetObject);
             }
 
             return guid;
@@ -162,10 +159,7 @@ namespace UnityEditor.AddressableAssets.GUI
                             assetRefObject.SetEditorSubObject(subObject);
                         else
                             assetRefObject.SubObjectName = null;
-                        EditorUtility.SetDirty(targetObj);
-                        Component comp = targetObj as Component;
-                        if (comp != null && comp.gameObject != null && comp.gameObject.activeInHierarchy)
-                            EditorSceneManager.MarkSceneDirty(comp.gameObject.scene);
+                        SetDirty(targetObj);
                     }
                     else
                     {
@@ -479,39 +473,37 @@ namespace UnityEditor.AddressableAssets.GUI
             Rect pickerRect = objRect;
             pickerRect.width = pickerWidth;
             pickerRect.x = objRect.xMax - pickerWidth;
-            var objNames = new string[subAssets.Count];
             bool multipleSubassets = false;
-            var selIndex = 0;
 
             // Get currently selected subasset
-            for (int i = 0; i < subAssets.Count; i++)
-            {
-                var subAsset = subAssets[i];
-                var objName = subAsset == null ? "<none>" : subAsset.name;
-                if (objName.EndsWith("(Clone)"))
-                    objName = objName.Replace("(Clone)", "");
-                objNames[i] = objName;
+            GetSelectedSubassetIndex(subAssets, out var selIndex, out var objNames);
 
-                // Check if targetObjects have multiple different selected
-                if (!multipleSubassets)
-                    multipleSubassets = CheckTargetObjectsSubassetsAreDifferent(property, objName, i, ref selIndex);
-                else
-                    break;
-            }
+            // Check if targetObjects have multiple different selected
+            if (property.serializedObject.targetObjects.Length > 1)
+                multipleSubassets = CheckTargetObjectsSubassetsAreDifferent(property, m_AssetRefObject.SubObjectName);
 
-            // Do custom popup with scroll to pick subasset
-            var subassetPopup = new SubassetPopup(selIndex, objNames, subAssets, property, this);
 
             bool isPickerPressed = Event.current.type == EventType.MouseDown && Event.current.button == 0 && pickerRect.Contains(Event.current.mousePosition);
             if (isPickerPressed)
             {
-                PopupWindow.Show(objRect, subassetPopup);
+                // Do custom popup with scroll to pick subasset
+                if (m_SubassetPopup == null || m_SubassetPopup.m_property != property)
+                {
+                    m_SubassetPopup = new SubassetPopup(selIndex, objNames, subAssets, property, this);
+                }
+
+                PopupWindow.Show(objRect, m_SubassetPopup);
+            }
+
+            if (m_SubassetPopup != null && m_SubassetPopup.SelectionChanged)
+            {
+                m_SubassetPopup.UpdateSubAssets();
             }
 
             // Show selected name
             GUIContent nameSelected = new GUIContent("--");
             if (!multipleSubassets)
-                nameSelected.text = objNames[subassetPopup.SelectedIndex];
+                nameSelected.text = objNames[selIndex];
             UnityEngine.GUI.Box(objRect, nameSelected, EditorStyles.objectField);
 
 #if UNITY_2019_1_OR_NEWER
@@ -520,8 +512,44 @@ namespace UnityEditor.AddressableAssets.GUI
 #endif
             return assetDropDownRect;
         }
+        
+        internal void GetSelectedSubassetIndex(List<Object> subAssets, out int selIndex, out string[] objNames)
+        {
+            objNames = new string[subAssets.Count];
+            selIndex = 0;
 
-        private bool CheckTargetObjectsSubassetsAreDifferent(SerializedProperty property, string objName, int currentIndex, ref int selIndex)
+            // Get currently selected subasset
+            for (int i = 0; i < subAssets.Count; i++)
+            {
+                var subAsset = subAssets[i];
+                var objName = subAsset == null ? "<none>" : subAsset.name;
+                if (objName.EndsWith("(Clone)"))
+                    objName = objName.Replace("(Clone)", "");
+                objNames[i] = subAsset == null ? objName : $"{objName}:{subAsset.GetType()}";
+
+                if (subAsset == null)
+                {
+                    selIndex = i;
+                }
+                else if (m_AssetRefObject.SubObjectName == objName)
+                {
+                    if (m_AssetRefObject.SubOjbectType != null)
+                    {
+                        if (subAsset.GetType().AssemblyQualifiedName ==
+                            m_AssetRefObject.SubOjbectType.AssemblyQualifiedName)
+                        {
+                            selIndex = i;
+                        }
+                    }
+                    else
+                    {
+                        selIndex = i;
+                    }
+                }
+            }
+        }
+
+        private bool CheckTargetObjectsSubassetsAreDifferent(SerializedProperty property, string objName)
         {
             foreach (var targetObject in property.serializedObject.targetObjects)
             {
@@ -530,14 +558,9 @@ namespace UnityEditor.AddressableAssets.GUI
                 string labelText = m_label.text;
                 var assetRefObject =
                     sp.GetActualObjectForSerializedProperty<AssetReference>(fieldInfo, ref labelText);
-                if (assetRefObject.SubObjectName == objName)
+                if (assetRefObject.SubObjectName != objName)
                 {
-                    if (selIndex == 0)
-                        selIndex = currentIndex;
-                    else if (selIndex != currentIndex)
-                    {
-                        return true;
-                    }
+                    return true;
                 }
             }
 
@@ -548,7 +571,7 @@ namespace UnityEditor.AddressableAssets.GUI
         {
             bool valueChanged = false;
             string spriteName = null;
-            if (subAsset != null)
+            if (subAsset != null && subAsset.GetType() == typeof(Sprite))
             {
                 spriteName = subAsset.name;
                 if (spriteName.EndsWith("(Clone)"))
@@ -569,14 +592,22 @@ namespace UnityEditor.AddressableAssets.GUI
                     if (success)
                     {
                         valueChanged = true;
-                        EditorUtility.SetDirty(t);
-                        var comp = t as Component;
-                        if (comp != null && comp.gameObject != null && comp.gameObject.activeInHierarchy)
-                            EditorSceneManager.MarkSceneDirty(comp.gameObject.scene);
+                        SetDirty(t);
                     }
                 }
             }
             return valueChanged;
+        }
+
+        static void SetDirty(Object obj)
+        {
+            UnityEngine.GUI.changed = true; // To support EditorGUI.BeginChangeCheck() / EditorGUI.EndChangeCheck()
+
+            EditorUtility.SetDirty(obj);
+            AddressableAssetUtility.OpenAssetIfUsingVCIntegration(obj);
+            var comp = obj as Component;
+            if (comp != null && comp.gameObject != null && comp.gameObject.activeInHierarchy)
+                EditorSceneManager.MarkSceneDirty(comp.gameObject.scene);
         }
 
         internal string GetNameForAsset(SerializedProperty property, bool isNotAddressable, FieldInfo propertyField)
@@ -617,10 +648,17 @@ namespace UnityEditor.AddressableAssets.GUI
             {
                 var t = o.GetType();
 
-                string propertyName = property.name;
-                int i = property.propertyPath.IndexOf('.');
-                if (i > 0)
-                    propertyName = property.propertyPath.Substring(0, i);
+                // We need to look into sub types, if any.
+                string[] pathParts = property.propertyPath.Split(new[] {'.'}, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < pathParts.Length - 1; i++)
+                {
+                    FieldInfo info = t.GetField(pathParts[i], BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (info != null)
+                    {
+                        t = info.FieldType;
+                    }
+                }
+                string propertyName = pathParts.LastOrDefault();
                 var f = t.GetField(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                 if (f != null)
                 {
@@ -654,16 +692,15 @@ namespace UnityEditor.AddressableAssets.GUI
         }
     }
 
-    class AddressableAsset {};
-
     class SubassetPopup : PopupWindowContent
     {
         internal int SelectedIndex = 0;
-        private SerializedProperty m_property;
+        internal SerializedProperty m_property;
         private string[] m_objNames;
         private List<Object> m_subAssets;
         private AssetReferenceDrawer m_drawer;
         private Vector2 m_scrollPosition;
+        bool selectionChanged = false;
 
         internal SubassetPopup(int selIndex, string[] objNames, List<Object> subAssets, SerializedProperty property, AssetReferenceDrawer drawer)
         {
@@ -672,6 +709,19 @@ namespace UnityEditor.AddressableAssets.GUI
             m_property = property;
             m_drawer = drawer;
             m_subAssets = subAssets;
+        }
+
+        public bool SelectionChanged => selectionChanged;
+        public void UpdateSubAssets()
+        {
+            if (selectionChanged)
+            {
+                if (!m_drawer.SetSubAssets(m_property, m_subAssets[SelectedIndex], m_drawer.fieldInfo))
+                {
+                    Debug.LogError("Unable to set all of the objects selected subassets");
+                }
+                selectionChanged = false;
+            }
         }
 
         public override void OnGUI(Rect rect)
@@ -684,15 +734,14 @@ namespace UnityEditor.AddressableAssets.GUI
 
             EditorGUILayout.BeginVertical();
             m_scrollPosition = EditorGUILayout.BeginScrollView(m_scrollPosition, GUILayout.Width(rect.width), GUILayout.Height(rect.height));
-
             for (int i = 0; i < m_objNames.Length; i++)
             {
                 if (GUILayout.Button(m_objNames[i], buttonStyle))
                 {
-                    SelectedIndex = i;
-                    if (!m_drawer.SetSubAssets(m_property, m_subAssets[SelectedIndex], m_drawer.fieldInfo))
+                    if (SelectedIndex != i)
                     {
-                        Debug.LogError("Unable to set all of the objects selected subassets");
+                        SelectedIndex = i;
+                        selectionChanged = true;
                     }
                     PopupWindow.focusedWindow.Close();
                     break;

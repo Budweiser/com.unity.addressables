@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Formatters.Binary;
 using UnityEditor.Build.Content;
+using UnityEditor.PackageManager;
+using UnityEditor.PackageManager.Requests;
 using UnityEngine;
 using UnityEngine.AddressableAssets.ResourceLocators;
 using UnityEngine.ResourceManagement.ResourceProviders;
@@ -56,7 +59,6 @@ namespace UnityEditor.AddressableAssets.Settings
         HashSet<string> m_Labels = new HashSet<string>();
 
         internal virtual bool HasSettings() { return false; }
-
 
         [NonSerialized]
         AddressableAssetGroup m_ParentGroup;
@@ -223,12 +225,19 @@ namespace UnityEditor.AddressableAssets.Settings
         /// Creates a list of keys that can be used to load this entry.
         /// </summary>
         /// <returns>The list of keys.  This will contain the address, the guid as a Hash128 if valid, all assigned labels, and the scene index if applicable.</returns>
-        public List<object> CreateKeyList()
+        public List<object> CreateKeyList() => CreateKeyList(true, true, true);
+
+        /// <summary>
+        /// Creates a list of keys that can be used to load this entry.
+        /// </summary>
+        /// <returns>The list of keys.  This will contain the address, the guid as a Hash128 if valid, all assigned labels, and the scene index if applicable.</returns>
+        internal List<object> CreateKeyList(bool includeAddress, bool includeGUID, bool includeLabels)
         {
             var keys = new List<object>();
             //the address must be the first key
-            keys.Add(address);
-            if (!string.IsNullOrEmpty(guid))
+            if (includeAddress)
+                keys.Add(address);
+            if (includeGUID && !string.IsNullOrEmpty(guid))
                 keys.Add(guid);
             if (IsScene && IsInSceneList)
             {
@@ -237,10 +246,20 @@ namespace UnityEditor.AddressableAssets.Settings
                     keys.Add(index);
             }
 
-            if (labels != null)
+            if (includeLabels && labels != null && labels.Count > 0)
             {
+                var labelsToRemove = new HashSet<string>();
+                var currentLabels = parentGroup.Settings.GetLabels();
                 foreach (var l in labels)
-                    keys.Add(l);
+                {
+                    if (currentLabels.Contains(l))
+                        keys.Add(l);
+                    else
+                        labelsToRemove.Add(l);
+                }
+
+                foreach (var l in labelsToRemove)
+                    labels.Remove(l);
             }
             return keys;
         }
@@ -288,6 +307,11 @@ namespace UnityEditor.AddressableAssets.Settings
             }
         }
 
+        internal void SetSubObjectType(Type type)
+        {
+            m_cachedMainAssetType = type;
+        }
+
         internal string m_cachedAssetPath = null;
         /// <summary>
         /// The path of the asset.
@@ -330,7 +354,7 @@ namespace UnityEditor.AddressableAssets.Settings
                         e = e.ParentEntry;
                     }
 
-                    m_MainAsset = AssetDatabase.LoadMainAssetAtPath(AssetPath);
+                    m_MainAsset = AssetDatabase.LoadMainAssetAtPath(e.AssetPath);
                 }
 
                 return m_MainAsset;
@@ -381,7 +405,6 @@ namespace UnityEditor.AddressableAssets.Settings
                 return m_TargetAsset;
             }
         }
-
         /// <summary>
         /// The asset load path.  This is used to determine the internal id of resource locations.
         /// </summary>
@@ -389,17 +412,33 @@ namespace UnityEditor.AddressableAssets.Settings
         /// <returns>Return the runtime path that should be used to load this entry.</returns>
         public string GetAssetLoadPath(bool isBundled)
         {
+            return GetAssetLoadPath(isBundled, null);
+        }
+
+        /// <summary>
+        /// The asset load path.  This is used to determine the internal id of resource locations.
+        /// </summary>
+        /// <param name="isBundled">True if the asset will be contained in an asset bundle.</param>
+        /// <returns>Return the runtime path that should be used to load this entry.</returns>
+        internal string GetAssetLoadPath(bool isBundled, HashSet<string> otherLoadPaths)
+        {
             if (!IsScene)
             {
                 if (IsInResources)
+                {
                     return GetResourcesPath(AssetPath);
+                }
                 else
+                {
+                    if (isBundled)
+                        return parentGroup.GetSchema<GroupSchemas.BundledAssetGroupSchema>().GetAssetLoadPath(AssetPath, otherLoadPaths, p => guid);
                     return AssetPath;
+                }
             }
             else
             {
                 if (isBundled)
-                    return AssetPath;
+                    return parentGroup.GetSchema<GroupSchemas.BundledAssetGroupSchema>().GetAssetLoadPath(AssetPath, otherLoadPaths, p => guid);
                 var path = AssetPath;
                 int i = path.LastIndexOf(".unity");
                 if (i > 0)
@@ -433,135 +472,31 @@ namespace UnityEditor.AddressableAssets.Settings
         /// <param name="entryFilter">Optional predicate to run against each entry, only returning those that pass.  A null filter will return all entries</param>
         public void GatherAllAssets(List<AddressableAssetEntry> assets, bool includeSelf, bool recurseAll, bool includeSubObjects, Func<AddressableAssetEntry, bool> entryFilter = null)
         {
-            var settings = parentGroup.Settings;
+            if (assets == null)
+                assets = new List<AddressableAssetEntry>();
 
             if (guid == EditorSceneListName)
             {
-                var pd = parentGroup.GetSchema<GroupSchemas.PlayerDataGroupSchema>();
-                if (pd.IncludeBuildSettingsScenes)
-                {
-                    foreach (var s in BuiltinSceneCache.scenes)
-                    {
-                        if (s.enabled)
-                        {
-                            var entry = settings.CreateSubEntryIfUnique(s.guid.ToString(), Path.GetFileNameWithoutExtension(s.path), this);
-                            if (entry != null) //TODO - it's probably really bad if this is ever null. need some error detection
-                            {
-                                entry.IsInSceneList = true;
-                                entry.m_Labels = m_Labels;
-                                if (entryFilter == null || entryFilter(entry))
-                                    assets.Add(entry);
-                            }
-                        }
-                    }
-                }
+                GatherEditorSceneEntries(assets, entryFilter);
             }
             else if (guid == ResourcesName)
             {
-                var pd = parentGroup.GetSchema<GroupSchemas.PlayerDataGroupSchema>();
-                if (pd.IncludeResourcesFolders)
-                {
-                    foreach (var resourcesDir in Directory.GetDirectories("Assets", "Resources", SearchOption.AllDirectories))
-                    {
-                        foreach (var file in Directory.GetFiles(resourcesDir, "*.*", recurseAll ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly))
-                        {
-                            if (AddressableAssetUtility.IsPathValidForEntry(file))
-                            {
-                                var g = AssetDatabase.AssetPathToGUID(file);
-                                var addr = GetResourcesPath(file);
-                                var entry = settings.CreateSubEntryIfUnique(g, addr, this);
-                                if (entry != null) //TODO - it's probably really bad if this is ever null. need some error detection
-                                {
-                                    entry.IsInResources = true;
-                                    entry.m_Labels = m_Labels;
-                                    if (entryFilter == null || entryFilter(entry))
-                                        assets.Add(entry);
-                                }
-                            }
-                        }
-                        if (!recurseAll)
-                        {
-                            foreach (var folder in Directory.GetDirectories(resourcesDir))
-                            {
-                                if (AssetDatabase.IsValidFolder(folder))
-                                {
-                                    var entry = settings.CreateSubEntryIfUnique(AssetDatabase.AssetPathToGUID(folder), GetResourcesPath(folder), this);
-                                    if (entry != null) //TODO - it's probably really bad if this is ever null. need some error detection
-                                    {
-                                        entry.IsInResources = true;
-                                        entry.m_Labels = m_Labels;
-                                        if (entryFilter == null || entryFilter(entry))
-                                            assets.Add(entry);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                GatherResourcesEntries(assets, recurseAll, entryFilter);
             }
             else
             {
-                var path = AssetPath;
-                if (string.IsNullOrEmpty(path))
+                if (string.IsNullOrEmpty(AssetPath))
                     return;
 
-                if (AssetDatabase.IsValidFolder(path))
+                if (AssetDatabase.IsValidFolder(AssetPath))
                 {
-                    foreach (var file in AddressablesFileEnumeration.EnumerateAddressableFolder(path, settings, recurseAll))
-                    {
-                        var subGuid = AssetDatabase.AssetPathToGUID(file);
-                        var entry = settings.CreateSubEntryIfUnique(subGuid, address + GetRelativePath(file, path), this);
-
-                        if (entry != null)
-                        {
-                            entry.IsInResources =
-                                IsInResources; //if this is a sub-folder of Resources, copy it on down
-                            entry.m_Labels = m_Labels;
-                            if (entryFilter == null || entryFilter(entry))
-                                assets.Add(entry);
-                        }
-                    }
-                    if (!recurseAll)
-                    {
-                        foreach (var fo in Directory.EnumerateDirectories(path, "*.*", SearchOption.TopDirectoryOnly))
-                        {
-                            var folder = fo.Replace('\\', '/');
-                            if (AssetDatabase.IsValidFolder(folder))
-                            {
-                                var entry = settings.CreateSubEntryIfUnique(AssetDatabase.AssetPathToGUID(folder), address + GetRelativePath(folder, path), this);
-                                if (entry != null)
-                                {
-                                    entry.IsInResources = IsInResources; //if this is a sub-folder of Resources, copy it on down
-                                    entry.m_Labels = m_Labels;
-                                    if (entryFilter == null || entryFilter(entry))
-                                        assets.Add(entry);
-                                }
-                            }
-                        }
-                    }
+                    GatherFolderEntries(assets, recurseAll, entryFilter);
                 }
                 else
                 {
                     if (MainAssetType == typeof(AddressableAssetEntryCollection))
                     {
-                        var col = AssetDatabase.LoadAssetAtPath<AddressableAssetEntryCollection>(AssetPath);
-                        if (col != null)
-                        {
-                            foreach (var e in col.Entries)
-                            {
-                                var entry = settings.CreateSubEntryIfUnique(e.guid, e.address, this);
-                                if (entry != null)
-                                {
-                                    entry.IsInResources = e.IsInResources;
-                                    foreach (var l in e.labels)
-                                        entry.SetLabel(l, true, false);
-                                    foreach (var l in m_Labels)
-                                        entry.SetLabel(l, true, false);
-                                    if (entryFilter == null || entryFilter(entry))
-                                        assets.Add(entry);
-                                }
-                            }
-                        }
+                        GatherAssetEntryCollectionEntries(assets, entryFilter);
                     }
                     else
                     {
@@ -573,55 +508,236 @@ namespace UnityEditor.AddressableAssets.Settings
                             var mainType = AssetDatabase.GetMainAssetTypeAtPath(AssetPath);
                             if (mainType == typeof(SpriteAtlas))
                             {
-                                var atlas = AssetDatabase.LoadAssetAtPath<SpriteAtlas>(AssetPath);
-                                var sprites = new Sprite[atlas.spriteCount];
-                                atlas.GetSprites(sprites);
-
-                                for (int i = 0; i < atlas.spriteCount; i++)
-                                {
-                                    var spriteName = sprites[i] == null ? "missing reference" : sprites[i].name;
-                                    if (sprites[i] == null)
-                                    {
-                                        if (string.IsNullOrEmpty(AssetPath) && IsSubAsset)
-                                            path = ParentEntry.AssetPath;
-                                        Debug.LogWarning(string.Format("NullReference in entry {0}\nAssetPath: {1}\nAddressableAssetGroup: {2}", address, path, parentGroup.Name));
-                                        assets.Add(new AddressableAssetEntry("", spriteName, parentGroup, true));
-                                    }
-                                    else
-                                    {
-                                        if (spriteName.EndsWith("(Clone)"))
-                                            spriteName = spriteName.Replace("(Clone)", "");
-
-                                        var namedAddress = string.Format("{0}[{1}]", address, spriteName);
-                                        var newEntry = settings.CreateEntry("", namedAddress, parentGroup, true);
-                                        newEntry.IsSubAsset = true;
-                                        newEntry.ParentEntry = this;
-                                        newEntry.IsInResources = IsInResources;
-                                        assets.Add(newEntry);
-                                    }
-                                }
+                                GatherSpriteAtlasEntries(assets, AssetPath);
                             }
-                            var objs = AssetDatabase.LoadAllAssetRepresentationsAtPath(AssetPath);
-                            for (int i = 0; i < objs.Length; i++)
+                            else
                             {
-                                var o = objs[i];
-                                var namedAddress = string.Format("{0}[{1}]", address, o == null ? "missing reference" : o.name);
-                                if (o == null)
+                                GatherSubObjectEntries(assets, AssetPath);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        void GatherSubObjectEntries(List<AddressableAssetEntry> assets, string path)
+        {
+            var objs = AssetDatabase.LoadAllAssetRepresentationsAtPath(AssetPath);
+            for (int i = 0; i < objs.Length; i++)
+            {
+                var o = objs[i];
+                var namedAddress = string.Format("{0}[{1}]", address, o == null ? "missing reference" : o.name);
+                if (o == null)
+                {
+                    if (string.IsNullOrEmpty(AssetPath) && IsSubAsset)
+                        path = ParentEntry.AssetPath;
+                    Debug.LogWarning(string.Format("NullReference in entry {0}\nAssetPath: {1}\nAddressableAssetGroup: {2}", address, path, parentGroup.Name));
+                    assets.Add(new AddressableAssetEntry("", namedAddress, parentGroup, true));
+                }
+                else
+                {
+                    var newEntry = parentGroup.Settings.CreateEntry("", namedAddress, parentGroup, true);
+                    newEntry.IsSubAsset = true;
+                    newEntry.ParentEntry = this;
+                    newEntry.IsInResources = IsInResources;
+                    newEntry.SetSubObjectType(o.GetType());
+                    assets.Add(newEntry);
+                }
+            }
+        }
+
+        void GatherSpriteAtlasEntries(List<AddressableAssetEntry> assets, string path)
+        {
+            var settings = parentGroup.Settings;
+            var atlas = AssetDatabase.LoadAssetAtPath<SpriteAtlas>(AssetPath);
+            var sprites = new Sprite[atlas.spriteCount];
+            atlas.GetSprites(sprites);
+
+            for (int i = 0; i < atlas.spriteCount; i++)
+            {
+                var spriteName = sprites[i] == null ? "missing reference" : sprites[i].name;
+                if (sprites[i] == null)
+                {
+                    if (string.IsNullOrEmpty(AssetPath) && IsSubAsset)
+                        path = ParentEntry.AssetPath;
+                    Debug.LogWarning(string.Format("NullReference in entry {0}\nAssetPath: {1}\nAddressableAssetGroup: {2}", address, path, parentGroup.Name));
+                    assets.Add(new AddressableAssetEntry("", spriteName, parentGroup, true));
+                }
+                else
+                {
+                    if (spriteName.EndsWith("(Clone)"))
+                        spriteName = spriteName.Replace("(Clone)", "");
+
+                    var namedAddress = string.Format("{0}[{1}]", address, spriteName);
+                    var newEntry = settings.CreateEntry("", namedAddress, parentGroup, true);
+                    newEntry.IsSubAsset = true;
+                    newEntry.ParentEntry = this;
+                    newEntry.IsInResources = IsInResources;
+                    assets.Add(newEntry);
+                }
+            }
+        }
+
+        void GatherAssetEntryCollectionEntries(List<AddressableAssetEntry> assets, Func<AddressableAssetEntry, bool> entryFilter)
+        {
+            var settings = parentGroup.Settings;
+            var col = AssetDatabase.LoadAssetAtPath<AddressableAssetEntryCollection>(AssetPath);
+            if (col != null)
+            {
+                foreach (var e in col.Entries)
+                {
+                    var entry = settings.CreateSubEntryIfUnique(e.guid, e.address, this);
+                    if (entry != null)
+                    {
+                        entry.IsInResources = e.IsInResources;
+                        foreach (var l in e.labels)
+                            entry.SetLabel(l, true, false);
+                        foreach (var l in m_Labels)
+                            entry.SetLabel(l, true, false);
+                        if (entryFilter == null || entryFilter(entry))
+                            assets.Add(entry);
+                    }
+                }
+            }
+        }
+
+        void GatherFolderEntries(List<AddressableAssetEntry> assets, bool recurseAll, Func<AddressableAssetEntry, bool> entryFilter)
+        {
+            var path = AssetPath;
+            var settings = parentGroup.Settings;
+            foreach (var file in AddressablesFileEnumeration.EnumerateAddressableFolder(path, settings, recurseAll))
+            {
+                var subGuid = AssetDatabase.AssetPathToGUID(file);
+                var entry = settings.CreateSubEntryIfUnique(subGuid, address + GetRelativePath(file, path), this);
+
+                if (entry != null)
+                {
+                    entry.IsInResources =
+                        IsInResources; //if this is a sub-folder of Resources, copy it on down
+                    entry.m_Labels = m_Labels;
+                    if (entryFilter == null || entryFilter(entry))
+                        assets.Add(entry);
+                }
+            }
+
+            if (!recurseAll)
+            {
+                foreach (var fo in Directory.EnumerateDirectories(path, "*.*", SearchOption.TopDirectoryOnly))
+                {
+                    var folder = fo.Replace('\\', '/');
+                    if (AssetDatabase.IsValidFolder(folder))
+                    {
+                        var entry = settings.CreateSubEntryIfUnique(AssetDatabase.AssetPathToGUID(folder), address + GetRelativePath(folder, path), this);
+                        if (entry != null)
+                        {
+                            entry.IsInResources = IsInResources; //if this is a sub-folder of Resources, copy it on down
+                            entry.m_Labels = m_Labels;
+                            if (entryFilter == null || entryFilter(entry))
+                                assets.Add(entry);
+                        }
+                    }
+                }
+            }
+        }
+
+        internal void GatherResourcesEntries(List<AddressableAssetEntry> assets, bool recurseAll, Func<AddressableAssetEntry, bool> entryFilter)
+        {
+            var settings = parentGroup.Settings;
+            var pd = parentGroup.GetSchema<GroupSchemas.PlayerDataGroupSchema>();
+            if (pd.IncludeResourcesFolders)
+            {
+                foreach (var resourcesDir in GetResourceDirectories())
+                {
+                    foreach (var file in Directory.GetFiles(resourcesDir, "*.*", recurseAll ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly))
+                    {
+                        if (AddressableAssetUtility.IsPathValidForEntry(file))
+                        {
+                            var g = AssetDatabase.AssetPathToGUID(file);
+                            var addr = GetResourcesPath(file);
+                            var entry = settings.CreateSubEntryIfUnique(g, addr, this);
+
+                            if (entry != null) //TODO - it's probably really bad if this is ever null. need some error detection
+                            {
+                                entry.IsInResources = true;
+                                entry.m_Labels = m_Labels;
+                                if (entryFilter == null || entryFilter(entry))
+                                    assets.Add(entry);
+                            }
+                        }
+                    }
+
+                    if (!recurseAll)
+                    {
+                        foreach (var folder in Directory.GetDirectories(resourcesDir))
+                        {
+                            if (AssetDatabase.IsValidFolder(folder))
+                            {
+                                var entry = settings.CreateSubEntryIfUnique(AssetDatabase.AssetPathToGUID(folder), GetResourcesPath(folder), this);
+                                if (entry != null) //TODO - it's probably really bad if this is ever null. need some error detection
                                 {
-                                    if (string.IsNullOrEmpty(AssetPath) && IsSubAsset)
-                                        path = ParentEntry.AssetPath;
-                                    Debug.LogWarning(string.Format("NullReference in entry {0}\nAssetPath: {1}\nAddressableAssetGroup: {2}", address, path, parentGroup.Name));
-                                    assets.Add(new AddressableAssetEntry("", namedAddress, parentGroup, true));
-                                }
-                                else
-                                {
-                                    var newEntry = settings.CreateEntry("", namedAddress, parentGroup, true);
-                                    newEntry.IsSubAsset = true;
-                                    newEntry.ParentEntry = this;
-                                    newEntry.IsInResources = IsInResources;
-                                    assets.Add(newEntry);
+                                    entry.IsInResources = true;
+                                    entry.m_Labels = m_Labels;
+                                    if (entryFilter == null || entryFilter(entry))
+                                        assets.Add(entry);
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        static IEnumerable<string> GetResourceDirectories()
+        {
+            foreach (string path in GetResourceDirectoriesatPath("Assets"))
+            {
+                yield return path;
+            }
+
+            List<PackageManager.PackageInfo> packages = AddressableAssetUtility.GetPackages();
+            foreach (PackageManager.PackageInfo package in packages)
+            {
+                foreach (string path in GetResourceDirectoriesatPath(package.assetPath))
+                {
+                    yield return path;
+                }
+            }
+        }
+
+        static IEnumerable<string> GetResourceDirectoriesatPath(string rootPath)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                foreach (string dir in Directory.EnumerateDirectories(rootPath, "*", SearchOption.AllDirectories))
+                {
+                    if (dir.EndsWith("/resources", StringComparison.OrdinalIgnoreCase))
+                        yield return dir;
+                }
+            }
+            else
+            {
+                foreach (string dir in Directory.EnumerateDirectories(rootPath, "Resources", SearchOption.AllDirectories))
+                    yield return dir;
+            }
+        }
+
+        void GatherEditorSceneEntries(List<AddressableAssetEntry> assets, Func<AddressableAssetEntry, bool> entryFilter)
+        {
+            var settings = parentGroup.Settings;
+            var pd = parentGroup.GetSchema<GroupSchemas.PlayerDataGroupSchema>();
+            if (pd.IncludeBuildSettingsScenes)
+            {
+                foreach (var s in BuiltinSceneCache.scenes)
+                {
+                    if (s.enabled)
+                    {
+                        var entry = settings.CreateSubEntryIfUnique(s.guid.ToString(), Path.GetFileNameWithoutExtension(s.path), this);
+                        if (entry != null) //TODO - it's probably really bad if this is ever null. need some error detection
+                        {
+                            entry.IsInSceneList = true;
+                            entry.m_Labels = m_Labels;
+                            if (entryFilter == null || entryFilter(entry))
+                                assets.Add(entry);
                         }
                     }
                 }
@@ -721,16 +837,19 @@ namespace UnityEditor.AddressableAssets.Settings
         /// <param name="providerTypes">Any unknown provider types are added to this set in order to ensure they are not stripped.</param>
         public void CreateCatalogEntries(List<ContentCatalogDataEntry> entries, bool isBundled, string providerType, IEnumerable<object> dependencies, object extraData, HashSet<Type> providerTypes)
         {
-            CreateCatalogEntriesInternal(entries, isBundled, providerType, dependencies, extraData, null, providerTypes);
+            CreateCatalogEntriesInternal(entries, isBundled, providerType, dependencies, extraData, null, providerTypes, true, true, true, null);
         }
 
-        internal void CreateCatalogEntriesInternal(List<ContentCatalogDataEntry> entries, bool isBundled, string providerType, IEnumerable<object> dependencies, object extraData, Dictionary<GUID, AssetLoadInfo> depInfo, HashSet<Type> providerTypes)
+        internal void CreateCatalogEntriesInternal(List<ContentCatalogDataEntry> entries, bool isBundled, string providerType, IEnumerable<object> dependencies, object extraData, Dictionary<GUID, AssetLoadInfo> depInfo, HashSet<Type> providerTypes, bool includeAddress, bool includeGUID, bool includeLabels, HashSet<string> assetsInBundle)
         {
             if (string.IsNullOrEmpty(AssetPath))
                 return;
 
-            string assetPath = GetAssetLoadPath(isBundled);
-            List<object> keyList = CreateKeyList();
+            string assetPath = GetAssetLoadPath(isBundled, assetsInBundle);
+            List<object> keyList = CreateKeyList(includeAddress, includeGUID, includeLabels);
+            if (keyList.Count == 0)
+                return;
+
             Type mainType = AddressableAssetUtility.MapEditorTypeToRuntimeType(MainAssetType, false);
             if (mainType == null && !IsInResources)
             {

@@ -119,7 +119,7 @@ namespace UnityEngine.ResourceManagement.Tests
             bool exceptionHandlerCalled = false;
             ResourceManager.ExceptionHandler += (h, ex) => exceptionHandlerCalled = true;
 
-            var op = m_RM.CreateCompletedOperation<int>(1, true, "An exception occured.");
+            var op = m_RM.CreateCompletedOperationInternal<int>(1, true, "An exception occured.");
 
             var status = AsyncOperationStatus.None;
             op.Completed += (x) => status = x.Status;
@@ -161,16 +161,6 @@ namespace UnityEngine.ResourceManagement.Tests
             Assert.False(op.DestroyedEventHasListeners);
             handle.Destroyed -= oph => {};
             Assert.False(op.DestroyedEventHasListeners);
-
-            Action<AsyncOperationHandle> dummy = oph => {};
-            Assert.False(op.CompletedTypelessEventHasListeners);
-
-            handle.CompletedTypeless += dummy;
-            Assert.True(op.CompletedTypelessEventHasListeners);
-
-            handle.CompletedTypeless -= dummy;
-            handle.CompletedTypeless -= dummy;
-            Assert.False(op.CompletedTypelessEventHasListeners);
 
             handle.Release();
         }
@@ -245,7 +235,7 @@ namespace UnityEngine.ResourceManagement.Tests
         {
             var depOp = m_RM.CreateOperation<ManualDownloadPercentCompleteOperation>(typeof(ManualDownloadPercentCompleteOperation), 1, 0, null);
             depOp.Start(m_RM, default, null);
-            var chainOp = m_RM.CreateChainOperation<object>(new AsyncOperationHandle(depOp), s => m_RM.CreateCompletedOperation<object>(null, true, null));
+            var chainOp = m_RM.CreateChainOperation<object>(new AsyncOperationHandle(depOp), s => m_RM.CreateCompletedOperationInternal<object>(null, true, null));
 
             AssertExpectedDownloadStatus(chainOp.GetDownloadStatus(), 0, 1024, 0f);
             depOp.m_bytesDownloaded = 512;
@@ -286,6 +276,27 @@ namespace UnityEngine.ResourceManagement.Tests
             o.CompleteNow();
             AssertExpectedDownloadStatus(gOp.GetDownloadStatus(), 1024, 1024, 1f);
             m_RM.Release(gOp);
+        }
+
+        class TestOp : AsyncOperationBase<int>
+        {
+            protected override void Execute()
+            {
+                InvokeCompletionEvent();
+            }
+        }
+
+        [Test] 
+        public void CompletionEvents_AreInvoked_InOrderAdded()
+        {
+            var op = new TestOp();
+            int count = 0;
+            op.Completed += o => { Assert.AreEqual(0, count); count++; };
+            op.CompletedTypeless += o => { Assert.AreEqual(1, count); count++; };
+            op.Completed += o => { Assert.AreEqual(2, count); count++; };
+            op.CompletedTypeless += o => { Assert.AreEqual(3, count); count++; };
+            op.Start(null, default, null);
+            op.Complete(1, true, null);
         }
     }
 }

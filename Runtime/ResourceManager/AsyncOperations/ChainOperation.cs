@@ -11,6 +11,7 @@ namespace UnityEngine.ResourceManagement
         AsyncOperationHandle<TObject> m_WrappedOp;
         Func<AsyncOperationHandle<TObjectDependency>, AsyncOperationHandle<TObject>> m_Callback;
         Action<AsyncOperationHandle<TObject>> m_CachedOnWrappedCompleted;
+        bool m_ReleaseDependenciesOnFailure = true;
         public ChainOperation()
         {
             m_CachedOnWrappedCompleted = OnWrappedCompleted;
@@ -20,14 +21,16 @@ namespace UnityEngine.ResourceManagement
 
         protected override void GetDependencies(List<AsyncOperationHandle> deps)
         {
-            deps.Add(m_DepOp);
+            if(m_DepOp.IsValid())
+                deps.Add(m_DepOp);
         }
 
-        public void Init(AsyncOperationHandle<TObjectDependency> dependentOp, Func<AsyncOperationHandle<TObjectDependency>, AsyncOperationHandle<TObject>> callback)
+        public void Init(AsyncOperationHandle<TObjectDependency> dependentOp, Func<AsyncOperationHandle<TObjectDependency>, AsyncOperationHandle<TObject>> callback, bool releaseDependenciesOnFailure)
         {
             m_DepOp = dependentOp;
             m_DepOp.Acquire();
             m_Callback = callback;
+            m_ReleaseDependenciesOnFailure = releaseDependenciesOnFailure;
         }
 
         protected override void Execute()
@@ -42,7 +45,7 @@ namespace UnityEngine.ResourceManagement
             string errorMsg = string.Empty;
             if (x.Status == AsyncOperationStatus.Failed)
                 errorMsg = string.Format("ChainOperation of Type: {0} failed because dependent operation failed\n{1}", typeof(TObject), x.OperationException != null ? x.OperationException.Message : string.Empty);
-            Complete(m_WrappedOp.Result, x.Status == AsyncOperationStatus.Succeeded, errorMsg);
+            Complete(m_WrappedOp.Result, x.Status == AsyncOperationStatus.Succeeded, errorMsg, m_ReleaseDependenciesOnFailure);
         }
 
         protected override void Destroy()
@@ -50,6 +53,12 @@ namespace UnityEngine.ResourceManagement
             if (m_WrappedOp.IsValid())
                 m_WrappedOp.Release();
 
+            if (m_DepOp.IsValid())
+                m_DepOp.Release();
+        }
+
+        internal override void ReleaseDependencies()
+        {
             if (m_DepOp.IsValid())
                 m_DepOp.Release();
         }
@@ -93,6 +102,8 @@ namespace UnityEngine.ResourceManagement
         AsyncOperationHandle<TObject> m_WrappedOp;
         Func<AsyncOperationHandle, AsyncOperationHandle<TObject>> m_Callback;
         Action<AsyncOperationHandle<TObject>> m_CachedOnWrappedCompleted;
+        bool m_ReleaseDependenciesOnFailure = true;
+
         public ChainOperationTypelessDepedency()
         {
             m_CachedOnWrappedCompleted = OnWrappedCompleted;
@@ -102,14 +113,16 @@ namespace UnityEngine.ResourceManagement
 
         protected override void GetDependencies(List<AsyncOperationHandle> deps)
         {
-            deps.Add(m_DepOp);
+            if(m_DepOp.IsValid())
+                deps.Add(m_DepOp);
         }
 
-        public void Init(AsyncOperationHandle dependentOp, Func<AsyncOperationHandle, AsyncOperationHandle<TObject>> callback)
+        public void Init(AsyncOperationHandle dependentOp, Func<AsyncOperationHandle, AsyncOperationHandle<TObject>> callback, bool releaseDependenciesOnFailure)
         {
             m_DepOp = dependentOp;
             m_DepOp.Acquire();
             m_Callback = callback;
+            m_ReleaseDependenciesOnFailure = releaseDependenciesOnFailure;
         }
 
         protected override void Execute()
@@ -124,7 +137,7 @@ namespace UnityEngine.ResourceManagement
             string errorMsg = string.Empty;
             if (x.Status == AsyncOperationStatus.Failed)
                 errorMsg = string.Format("ChainOperation of Type: {0} failed because dependent operation failed\n{1}", typeof(TObject), x.OperationException != null ? x.OperationException.Message : string.Empty);
-            Complete(m_WrappedOp.Result, x.Status == AsyncOperationStatus.Succeeded, errorMsg);
+            Complete(m_WrappedOp.Result, x.Status == AsyncOperationStatus.Succeeded, errorMsg, m_ReleaseDependenciesOnFailure);
         }
 
         protected override void Destroy()
@@ -132,6 +145,12 @@ namespace UnityEngine.ResourceManagement
             if (m_WrappedOp.IsValid())
                 m_WrappedOp.Release();
 
+            if (m_DepOp.IsValid())
+                m_DepOp.Release();
+        }
+
+        internal override void ReleaseDependencies()
+        {
             if (m_DepOp.IsValid())
                 m_DepOp.Release();
         }

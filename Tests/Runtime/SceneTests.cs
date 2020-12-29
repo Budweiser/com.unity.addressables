@@ -5,10 +5,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 #if UNITY_EDITOR
-using UnityEditor;
 using UnityEditor.AddressableAssets.Settings;
 using UnityEditor.AddressableAssets.Settings.GroupSchemas;
-using UnityEditor.SceneManagement;
 #endif
 using UnityEngine;
 using UnityEngine.AddressableAssets;
@@ -18,7 +16,6 @@ using UnityEngine.ResourceManagement.ResourceProviders;
 using UnityEngine.ResourceManagement.Util;
 using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
-using Object = UnityEngine.Object;
 
 namespace SceneTests
 {
@@ -26,7 +23,7 @@ namespace SceneTests
     {
         int m_StartingSceneCount;
         const int numScenes = 2;
-        List<String> sceneKeys;
+        protected List<String> sceneKeys;
         const string prefabKey = "prefabKey";
         public SceneTests()
         {
@@ -40,30 +37,23 @@ namespace SceneTests
 #if UNITY_EDITOR
         internal override void Setup(AddressableAssetSettings settings, string tempAssetFolder)
         {
-            var group = settings.CreateGroup("SceneGroup", true, false, false, null, typeof(BundledAssetGroupSchema));
+            AddressableAssetGroup group = settings.CreateGroup("SceneGroup", true, false, false, null, typeof(BundledAssetGroupSchema));
             group.GetSchema<BundledAssetGroupSchema>().BundleNaming = BundledAssetGroupSchema.BundleNamingStyle.OnlyHash;
+
             // Create prefab
-            var prefabGuid = CreatePrefab(Path.Combine(tempAssetFolder, String.Concat(prefabKey, ".prefab")));
-            var prefabEntry = settings.CreateOrMoveEntry(prefabGuid, group, false, false);
+            string prefabPath = CreateAssetPath(tempAssetFolder, prefabKey, ".prefab");
+            string prefabGuid = CreatePrefab(prefabPath);
+            AddressableAssetEntry prefabEntry = settings.CreateOrMoveEntry(prefabGuid, group, false, false);
             prefabEntry.address = Path.GetFileNameWithoutExtension(prefabEntry.AssetPath);
 
             // Create scenes
             for (int i = 0; i < numScenes; i++)
             {
-                var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Additive);
-                EditorSceneManager.SaveScene(scene, Path.Combine(tempAssetFolder, String.Concat(sceneKeys[i], ".unity")));
-                var guid = AssetDatabase.AssetPathToGUID(scene.path);
-                var entry = settings.CreateOrMoveEntry(guid, group, false, false);
-                entry.address = Path.GetFileNameWithoutExtension(entry.AssetPath);
+                string scenePath = CreateAssetPath(tempAssetFolder, sceneKeys[i], ".unity");
+                string sceneGuid = CreateScene(scenePath);
+                AddressableAssetEntry sceneEntry = settings.CreateOrMoveEntry(sceneGuid, group, false, false);
+                sceneEntry.address = Path.GetFileNameWithoutExtension(sceneEntry.AssetPath);
             }
-        }
-
-        static string CreatePrefab(string assetPath)
-        {
-            GameObject go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            PrefabUtility.SaveAsPrefabAsset(go, assetPath);
-            Object.DestroyImmediate(go, false);
-            return AssetDatabase.AssetPathToGUID(assetPath);
         }
 
 #endif
@@ -79,18 +69,6 @@ namespace SceneTests
             Assert.AreEqual(m_StartingSceneCount, m_Addressables.SceneOperationCount);
         }
 
-        IEnumerator UnloadSceneFromHandler(AsyncOperationHandle<SceneInstance> op)
-        {
-            string sceneName = op.Result.Scene.name;
-            Assert.IsNotNull(sceneName);
-            var unloadOp = m_Addressables.UnloadSceneAsync(op, false);
-            yield return unloadOp;
-            Assert.AreEqual(AsyncOperationStatus.Succeeded, unloadOp.Status);
-            Assert.IsFalse(unloadOp.Result.Scene.isLoaded);
-            m_Addressables.Release(unloadOp);
-            Assert.IsNull(SceneManager.GetSceneByName(sceneName).name);
-        }
-
         [UnityTest]
         public IEnumerator CanLoadMultipleScenesAdditively()
         {
@@ -104,8 +82,19 @@ namespace SceneTests
             Assert.AreEqual(AsyncOperationStatus.Succeeded, op1.Status);
             Assert.AreEqual(sceneKeys[1], SceneManager.GetSceneByName(sceneKeys[1]).name);
 
-            yield return UnloadSceneFromHandler(op);
-            yield return UnloadSceneFromHandler(op1);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
+            yield return UnloadSceneFromHandler(op1, m_Addressables);
+        }
+
+        [UnityTest]
+        public IEnumerator AddressablesImpl_LoadSceneAsync_FailsLoadNonexistent()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            var op = m_Addressables.LoadSceneAsync("testkey");
+            yield return op;
+            
+            Assert.AreEqual(AsyncOperationStatus.Failed,op.Status);
+            Assert.IsTrue(op.OperationException.Message.Contains("InvalidKey"));
         }
 
         [UnityTest]
@@ -126,7 +115,7 @@ namespace SceneTests
             yield return op;
 
             //Cleanup
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
         }
 
         [UnityTest]
@@ -144,7 +133,7 @@ namespace SceneTests
             Assert.AreEqual(AsyncOperationStatus.Succeeded, instOp.Status);
             Assert.AreEqual(sceneKeys[0], instOp.Result.scene.name);
 
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
             Assert.IsFalse(instOp.IsValid());
         }
 
@@ -191,10 +180,10 @@ namespace SceneTests
             Assert.AreEqual(AsyncOperationStatus.Succeeded, instOp.Status);
             Assert.AreEqual(sceneKeys[1], instOp.Result.scene.name);
 
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
             Assert.NotNull(GameObject.Find(instOp.Result.name));
 
-            yield return UnloadSceneFromHandler(activeScene);
+            yield return UnloadSceneFromHandler(activeScene, m_Addressables);
             Assert.IsFalse(instOp.IsValid());
         }
 
@@ -240,7 +229,7 @@ namespace SceneTests
 
             Assert.AreEqual(op.Result.m_Operation, activateScene);
 
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
         }
 
         [UnityTest]
@@ -252,7 +241,7 @@ namespace SceneTests
             Assert.AreEqual(1, m_Addressables.m_SceneInstances.Count);
             Assert.IsTrue(m_Addressables.m_SceneInstances.Contains(op));
 
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
         }
 
         [UnityTest]
@@ -265,7 +254,8 @@ namespace SceneTests
             Assert.AreEqual(1, m_Addressables.m_SceneInstances.Count);
             Assert.IsTrue(m_Addressables.m_SceneInstances.Contains(op));
 
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
+            impl.ResourceManager.Dispose();
         }
 
         [UnityTest]
@@ -276,9 +266,56 @@ namespace SceneTests
             yield return op;
 
             Assert.AreEqual(1, m_Addressables.m_SceneInstances.Count);
-            yield return UnloadSceneFromHandler(op);
+            yield return UnloadSceneFromHandler(op, m_Addressables);
 
             Assert.AreEqual(0, m_Addressables.m_SceneInstances.Count);
+            impl.ResourceManager.Dispose();
+        }
+        
+        [UnityTest]
+        public IEnumerator SceneTests_UnloadSceneAsync_CanUnloadBaseHandle()
+        {
+            AddressablesImpl impl = new AddressablesImpl(new DefaultAllocationStrategy());
+            var op = m_Addressables.LoadSceneWithChain(impl.InitializeAsync(), sceneKeys[0], LoadSceneMode.Additive);
+            yield return op;
+            
+            Assert.AreEqual(1, m_Addressables.m_SceneInstances.Count);
+            bool autoReleaseHandle = false;
+            op = impl.UnloadSceneAsync((AsyncOperationHandle)op,autoReleaseHandle);
+            yield return op;
+
+            Assert.AreEqual(AsyncOperationStatus.Succeeded,op.Status);
+            op.Release();
+            yield return op;
+            
+            Assert.AreEqual(0, m_Addressables.m_SceneInstances.Count);
+        }
+        
+        [UnityTest]
+        public IEnumerator SceneTests_UnloadSceneAsync_CanUnloadFromSceneInstance()
+        {
+            AddressablesImpl impl = new AddressablesImpl(new DefaultAllocationStrategy());
+            var op = m_Addressables.LoadSceneAsync(sceneKeys[0], LoadSceneMode.Additive);
+            yield return op;
+            
+            Assert.AreEqual(1, m_Addressables.m_SceneInstances.Count);
+            var sceneInst = op.m_InternalOp.Result; 
+            yield return m_Addressables.UnloadSceneAsync(sceneInst);
+
+            Assert.AreEqual(0, m_Addressables.m_SceneInstances.Count);
+        }
+
+        [UnityTest]
+        public IEnumerator GetDownloadSize_DoesNotThrowInvalidKeyException_ForScene()
+        {
+#if ENABLE_CACHING
+            var dOp = m_Addressables.GetDownloadSizeAsync((object)sceneKeys[0]);
+            yield return dOp;
+            Assert.AreEqual(AsyncOperationStatus.Succeeded, dOp.Status);
+#else
+            Assert.Ignore();
+            yield break;
+#endif
         }
     }
 
@@ -287,7 +324,38 @@ namespace SceneTests
 
     class SceneTests_VirtualMode : SceneTests { protected override TestBuildScriptMode BuildScriptMode { get { return TestBuildScriptMode.Virtual; } } }
 
-    class SceneTests_PackedPlaymodeMode : SceneTests { protected override TestBuildScriptMode BuildScriptMode { get { return TestBuildScriptMode.PackedPlaymode; } } }
+    class SceneTests_PackedPlaymodeMode : SceneTests
+    {
+        protected override TestBuildScriptMode BuildScriptMode { get { return TestBuildScriptMode.PackedPlaymode; } }
+
+        [UnityTest]
+        public IEnumerator UnloadScene_ChainsBehindLoadOp_IfLoadOpIsRunning_TypedHandle()
+        {
+            //Setup
+            AsyncOperationHandle<SceneInstance> handle = m_Addressables.LoadSceneAsync(sceneKeys[0], LoadSceneMode.Additive);
+
+            //Test
+            var unloadHandle = m_Addressables.UnloadSceneAsync(handle);
+            yield return unloadHandle;
+
+            //Assert
+            Assert.AreEqual(typeof(ChainOperation<SceneInstance, SceneInstance>), unloadHandle.m_InternalOp.GetType(), "Unload a scene while a Load is in progress should have resulted in the unload being chained behind the load op, but wasn't");
+        }
+
+        [UnityTest]
+        public IEnumerator UnloadScene_ChainsBehindLoadOp_IfLoadOpIsRunning_TypelessHandle()
+        {
+            //Setup
+            AsyncOperationHandle handle = m_Addressables.LoadSceneAsync(sceneKeys[0], LoadSceneMode.Additive);
+
+            //Test
+            var unloadHandle = m_Addressables.UnloadSceneAsync(handle);
+            yield return unloadHandle;
+
+            //Assert
+            Assert.AreEqual(typeof(ChainOperationTypelessDepedency<SceneInstance>), unloadHandle.m_InternalOp.GetType(), "Unload a scene while a Load is in progress should have resulted in the unload being chained behind the load op, but wasn't");
+        }
+    }
 #endif
     //[Bug: https://jira.unity3d.com/browse/ADDR-1215]
     //[UnityPlatform(exclude = new[] { RuntimePlatform.WindowsEditor, RuntimePlatform.OSXEditor, RuntimePlatform.LinuxEditor })]
