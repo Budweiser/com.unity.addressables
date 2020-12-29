@@ -1,1 +1,1 @@
-# com.unity.addressables
+Addressable Assets info placeholder
